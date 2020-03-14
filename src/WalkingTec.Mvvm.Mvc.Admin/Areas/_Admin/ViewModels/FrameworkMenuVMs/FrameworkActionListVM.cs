@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.Linq;
@@ -40,18 +40,40 @@ namespace WalkingTec.Mvvm.Mvc.Admin.ViewModels.FrameworkMenuVMs
         public override IOrderedQueryable<FrameworkAction_ListView> GetSearchQuery()
         {
             var newdc = DC as FrameworkContext;
-            var actions = newdc.Set<FrameworkAction>()
-                .Where(x => newdc.BaseFrameworkMenus.Where(y => y.ActionId != null).Select(y => y.ActionId).Distinct().Contains(x.ID) == false)
-                .Select(x => new FrameworkAction_ListView
-                {
-                    ID = x.ID,
-                    ModuleID = x.ModuleId,
-                    ModuleName = x.Module.ModuleName,
-                    ActionName = x.ActionName,
-                    ClassName = x.Module.ClassName,
-                    MethodName = x.MethodName,
-                    AreaName = x.Module.Area.AreaName
-                }).ToList();
+            List<FrameworkAction_ListView> actions = new List<FrameworkAction_ListView>();
+            var urls = newdc.BaseFrameworkMenus.Where(y => y.IsInside == true && y.FolderOnly == false).Select(y => y.Url).Distinct().ToList();
+            if (ControllerName == "WalkingTec.Mvvm.Mvc.Admin.Controllers.FrameworkMenuController")
+            {
+                 actions = GlobalServices.GetRequiredService<GlobalData>().AllModule.SelectMany(x=>x.Actions)
+                    .Where(x => urls.Contains(x.Url) == false)
+                    .Select(x => new FrameworkAction_ListView
+                    {
+                        ID = x.ID,
+                        ModuleID = x.ModuleId,
+                        ModuleName = x.Module.ModuleName,
+                        ActionName = x.ActionName,
+                        ClassName = x.Module.ClassName,
+                        MethodName = x.MethodName,
+                        AreaName = x.Module.Area?.AreaName
+                    }).ToList();
+            }
+            else
+            {
+                actions = GlobalServices.GetRequiredService<GlobalData>().AllModule.SelectMany(x => x.Actions)
+                   .Where(x => x.Module.IsApi == true && urls.Contains(x.Url) == false)
+                   .Select(x => new FrameworkAction_ListView
+                    {
+                        ID = x.ID,
+                        ModuleID = x.ModuleId,
+                        ModuleName = x.Module.ModuleName,
+                        ActionName = x.ActionName,
+                        ClassName = x.Module.ClassName,
+                        MethodName = x.MethodName,
+                        AreaName = x.Module.Area?.AreaName
+                    }).ToList();
+
+            }
+
             var modules = GlobalServices.GetRequiredService<GlobalData>().AllModule;
             List<FrameworkAction_ListView> toremove = new List<FrameworkAction_ListView>();
             foreach (var item in actions)
@@ -73,15 +95,16 @@ namespace WalkingTec.Mvvm.Mvc.Admin.ViewModels.FrameworkMenuVMs
     {
         public Guid? ModuleID { get; set; }
 
-        [Display(Name = "模块名称")]
+        [Display(Name = "ModuleName")]
         public string ModuleName { get; set; }
-        [Display(Name = "动作名称")]
+        [Display(Name = "ActionName")]
         public string ActionName { get; set; }
-        [Display(Name = "类名")]
+        [Display(Name = "ClassName")]
         public string ClassName { get; set; }
-        [Display(Name = "方法名")]
+        [Display(Name = "MethodName")]
         public string MethodName { get; set; }
 
         public string AreaName { get; set; }
+
     }
 }

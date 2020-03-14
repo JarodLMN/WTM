@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.Linq;
@@ -11,28 +11,23 @@ namespace WalkingTec.Mvvm.Mvc.Admin.ViewModels.FrameworkMenuVMs
     {
         public FrameworkMenuBatchVM()
         {
-            ListVM = new FrameworkMenuListVM();
-            LinkedVM = new FrameworkMenu_BatchEdit();
         }
         protected override void InitVM()
         {
-            var topMenu = DC.Set<FrameworkMenu>().Where(x => x.ParentId == null).ToList().FlatTree();
-            List<Guid> pids = new List<Guid>();
-            foreach (var item in this.Ids)
-            {
-                pids.AddRange(DC.Set<FrameworkMenu>().Where(x => x.ParentId == item).Select(x => x.ID).ToList());
-            }
+        }
 
-            LinkedVM.AllParents = topMenu.Where(x => !this.Ids.Contains(x.ID) && !pids.Contains(x.ID)).ToList().ToListItems(y => y.PageName, x=>x.ID);
-            foreach (var p in LinkedVM.AllParents)
+        public override bool DoBatchDelete()
+        {
+            if (Ids != null)
             {
-                Guid temp = Guid.Parse(p.Value);
-                var m = topMenu.Where(x => x.ID == temp).SingleOrDefault();
-                if (m != null && m.ActionId != null)
+                foreach (var item in Ids)
                 {
-                    p.Text = p.Text + "(" + m.ModuleName + ")";
+                    FrameworkMenu f = new FrameworkMenu { ID = Guid.Parse(item) };
+                    DC.CascadeDelete(f);
                 }
             }
+            DC.SaveChanges();
+            return true;
         }
     }
 
@@ -42,13 +37,13 @@ namespace WalkingTec.Mvvm.Mvc.Admin.ViewModels.FrameworkMenuVMs
     public class FrameworkMenu_BatchEdit : BaseVM
     {
         public List<Guid> IDs { get; set; }
-        [Display(Name = "菜单显示")]
+        [Display(Name = "ShowOnMenu")]
         public bool ShowOnMenu { get; set; }
 
-        [Display(Name = "父级目录")]
+        [Display(Name = "ParentFolder")]
         public Guid? ParentID { get; set; }
         public List<ComboSelectListItem> AllParents { get; set; }
-        [Display(Name = "图标")]
-        public Guid? IconID { get; set; }
+        [Display(Name = "ICon")]
+        public string ICon { get; set; }
     }
 }

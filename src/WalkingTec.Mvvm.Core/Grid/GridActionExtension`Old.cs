@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 
 namespace WalkingTec.Mvvm.Core
 {
@@ -142,10 +142,14 @@ namespace WalkingTec.Mvvm.Core
             return self;
         }
         /// <summary>
-        /// 如果不为null，则只运行这个变量设定的script，其他的属性都不起作用
+        /// 如果不为null，则只运行这个变量设定的script，其他的属性都不起作用    
         /// </summary>
         /// <param name="self"></param>
         /// <param name="onClickScript"></param>
+        /// <remarks>
+        /// 如设置SetOnClickScript("test")，点击按钮时框架会调用页面上的javascript方法: function test(ids,datas){}
+        /// ids是勾选的id数组，datas是勾选的所有字段数组
+        /// </remarks>
         /// <returns></returns>
         public static GridAction SetOnClickScript(this GridAction self, string onClickScript)
         {
@@ -176,6 +180,18 @@ namespace WalkingTec.Mvvm.Core
         public static GridAction SetNotResizable(this GridAction self, bool resizable = false)
         {
             self.Resizable = resizable;
+            return self;
+        }
+
+        /// <summary>
+        /// 设置一个布尔值的列名，当改列值为true的时候才显示本行的这个动作按钮
+        /// </summary>
+        /// <param name="self"></param>
+        /// <param name="colName"></param>
+        /// <returns></returns>
+        public static GridAction SetBindVisiableColName(this GridAction self, string colName)
+        {
+            self.BindVisiableColName = colName;
             return self;
         }
     }

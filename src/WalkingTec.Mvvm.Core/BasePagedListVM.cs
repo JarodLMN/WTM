@@ -1,17 +1,22 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using MySql.Data.MySqlClient;
+using Newtonsoft.Json;
+using Npgsql;
+using NpgsqlTypes;
 using NPOI.HSSF.UserModel;
 using NPOI.HSSF.Util;
 using NPOI.SS.UserModel;
 using NPOI.SS.Util;
 using System;
 using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations.Schema;
 using System.Data;
 using System.Data.Common;
 using System.Data.SqlClient;
 using System.IO;
 using System.Linq;
 using System.Linq.Expressions;
+using System.Reflection;
 using System.Text.RegularExpressions;
 using WalkingTec.Mvvm.Core.Extensions;
 
@@ -43,50 +48,63 @@ namespace WalkingTec.Mvvm.Core
         where TSearcher : BaseSearcher
     {
 
-        public DataTable EntityDataTable { get; set; }
+        [JsonIgnore]
+        public string TotalText { get; set; } = Program._localizer?["Total"];
 
         public virtual DbCommand GetSearchCommand()
         {
             return null;
         }
 
+        private int? _childrenDepth;
+
+
         /// <summary>
         /// 多级表头深度  默认 1级
         /// </summary>
-        public int ChildrenDepth { get; set; }
-
-        private IEnumerable<IGridColumn<TModel>> _gridHeaders;
+        public int GetChildrenDepth()
+        {
+            if (_childrenDepth == null)
+            {
+                _childrenDepth = _getHeaderDepth();
+            }
+            return _childrenDepth.Value;
+        }
 
         /// <summary>
         /// GridHeaders
         /// </summary>
-        public IEnumerable<IGridColumn<TModel>> GridHeaders
-        {
-            get
-            {
-                if (_gridHeaders == null)
-                {
-                    _gridHeaders = InitGridHeader();
-                    OnAfterInitList?.Invoke(this);
-                }
-                return _gridHeaders;
-            }
-            set
-            {
-                _gridHeaders = value;
-            }
-        }
+        [JsonIgnore]
+        public IEnumerable<IGridColumn<TModel>> GridHeaders { get; set; }
 
         /// <summary>
         /// GetHeaders
         /// </summary>
         /// <returns></returns>
-        public IEnumerable<IGridColumn<TModel>> GetHeaders() => GridHeaders;
+        public IEnumerable<IGridColumn<TModel>> GetHeaders()
+        {
+            if (GridHeaders == null)
+            {
+                GridHeaders = InitGridHeader();
+            }
+            return GridHeaders;
+        }
 
+        /// <summary>
+        /// 计算多级表头深度
+        /// </summary>
+        /// <returns></returns>
+        private int _getHeaderDepth()
+        {
+            IEnumerable<IGridColumn<TModel>> headers = GetHeaders();
+            return headers.Max(x => x.MaxDepth);
+        }
         private List<GridAction> _gridActions;
+
         /// <summary>
         /// 页面动作
         /// </summary>
+        [JsonIgnore]
         public List<GridAction> GridActions
         {
             get
@@ -104,23 +122,7 @@ namespace WalkingTec.Mvvm.Core
         /// </summary>
         protected virtual IEnumerable<IGridColumn<TModel>> InitGridHeader()
         {
-            List<GridColumn<TModel>> rv = new List<GridColumn<TModel>>();
-            var cmd = GetSearchCommand();
-            if (cmd != null)
-            {
-                var temp = Searcher.Limit;
-                Searcher.Limit = 0;
-                IsSearched = false;
-                DoSearch();
-                IsSearched = false;
-                Searcher.Limit = temp;
-                for (int i = 0; i < EntityDataTable.Columns.Count; i++)
-                {
-                    var col = EntityDataTable.Columns[i];
-                    rv.Add(new GridColumn<TModel>() { Title = col.ColumnName, FieldType = col.DataType, Field = col.ColumnName, Align = GridColumnAlignEnum.Left });
-                }
-            }
-            return rv;
+            return new List<GridColumn<TModel>>();
         }
         protected virtual List<GridAction> InitGridAction()
         {
@@ -136,245 +138,166 @@ namespace WalkingTec.Mvvm.Core
         public virtual byte[] GenerateExcel()
         {
             NeedPage = false;
-            if (IsSearched == false)
+            if (GridHeaders == null)
             {
                 GetHeaders();
+            }
+            if (IsSearched == false)
+            {
                 DoSearch();
             }
             HSSFWorkbook workbook = new HSSFWorkbook();
             List<HSSFSheet> sheets = new List<NPOI.HSSF.UserModel.HSSFSheet>();
-            if (EntityDataTable != null)
+            //准备好sheet，每6万行生成一个sheet
+            var sheetno = ((EntityList.Count - 1) / 60000) + 1;
+            var headerStyle = workbook.CreateCellStyle();
+            //设定单元格边框
+            headerStyle.BorderBottom = BorderStyle.Thin;
+            headerStyle.BorderLeft = BorderStyle.Thin;
+            headerStyle.BorderRight = BorderStyle.Thin;
+            headerStyle.BorderTop = BorderStyle.Thin;
+            //用灰色填充背景
+            var headerbg = HSSFColor.Grey25Percent.Index;
+            headerStyle.FillForegroundColor = headerbg;
+            headerStyle.FillPattern = FillPattern.SolidForeground;
+            headerStyle.FillBackgroundColor = headerbg;
+            //去掉 Id 列和动作列
+            RemoveActionAndIdColumn();
+            //循环生成所有sheet，并为每个sheet添加表头
+            var headerrows = 0;
+            for (int i = 1; i <= sheetno; i++)
             {
-                //准备好sheet，每6万行生成一个sheet
-                var sheetno = ((EntityDataTable.Rows.Count - 1) / 60000) + 1;
-
-                var headerStyle = workbook.CreateCellStyle();
-                //设定单元格边框
-                headerStyle.BorderBottom = BorderStyle.Thin;
-                headerStyle.BorderLeft = BorderStyle.Thin;
-                headerStyle.BorderRight = BorderStyle.Thin;
-                headerStyle.BorderTop = BorderStyle.Thin;
-                //用灰色填充背景
-                var headerbg = HSSFColor.Grey25Percent.Index;
-                headerStyle.FillForegroundColor = headerbg;
-                headerStyle.FillPattern = FillPattern.SolidForeground;
-                headerStyle.FillBackgroundColor = headerbg;
-                //去掉 Id 列和动作列
-                RemoveActionAndIdColumn();
-                //循环生成所有sheet，并为每个sheet添加表头
-                var headerrows = 0;
-                for (int i = 1; i <= sheetno; i++)
-                {
-                    HSSFSheet sheet = workbook.CreateSheet("Sheet" + i) as HSSFSheet;
-                    //生成表头
-                    headerrows = MakeExcelHeader(sheet, GridHeaders, 0, 0, headerStyle);
-                    sheets.Add(sheet);
-                }
-
-                var rowIndex = headerrows;
-                var colIndex = 0;
-
-                //Excel中用到的style，每种前景色和背景色的组合为一个style。Nopi值支持4000个style，所以同样的style要重复使用
-                Dictionary<string, ICellStyle> styles = new Dictionary<string, ICellStyle>();
-                //Excel中用到的font，主要是为了更改字体颜色
-                Dictionary<string, IFont> fonts = new Dictionary<string, IFont>();
-                //循环数据
-                foreach (DataRow row in EntityDataTable.Rows)
-                {
-                    var sheetindex = ((rowIndex - headerrows) / 60000);
-                    colIndex = 0;
-                    var dr = sheets[sheetindex].CreateRow(rowIndex - sheetindex * 60000) as HSSFRow;
-                    foreach (var baseCol in GridHeaders)
-                    {
-
-                        foreach (var col in baseCol.BottomChildren)
-                        {
-
-                            //获取数据，并过滤特殊字符
-                            string text = Regex.Replace(row[col.Title].ToString(), @"<[^>]*>", String.Empty);
-
-
-                            //建立excel单元格
-                            var cell = dr.CreateCell(colIndex);
-                            ICellStyle style = null;
-                            var styleKey = string.Empty;
-                            //如果已经有符合条件的style，则使用
-                            if (styles.ContainsKey(styleKey))
-                            {
-                                style = styles[styleKey];
-                            }
-                            //如果没有，则新建一个style
-                            else
-                            {
-                                var newKey = string.Empty;
-                                //新建style
-                                style = workbook.CreateCellStyle();
-                                //设定单元格边框
-                                style.BorderBottom = BorderStyle.Thin;
-                                style.BorderLeft = BorderStyle.Thin;
-                                style.BorderRight = BorderStyle.Thin;
-                                style.BorderTop = BorderStyle.Thin;
-                                //如果行前景色或单元格前景色有值，则设定单元格的填充颜色
-                                //将新建的style添加到集合中
-                                styles.Add(newKey, style);
-                            }
-                            cell.CellStyle = style;
-                            cell.SetCellValue(text);
-                            colIndex++;
-                        }
-                    }
-                    rowIndex++;
-                }
+                HSSFSheet sheet = workbook.CreateSheet("Sheet" + i) as HSSFSheet;
+                //生成表头
+                headerrows = MakeExcelHeader(sheet, GridHeaders, 0, 0, headerStyle);
+                sheets.Add(sheet);
             }
-            else
+
+            var rowIndex = headerrows;
+            var colIndex = 0;
+
+            //Excel中用到的style，每种前景色和背景色的组合为一个style。Nopi值支持4000个style，所以同样的style要重复使用
+            Dictionary<string, ICellStyle> styles = new Dictionary<string, ICellStyle>();
+            //Excel中用到的font，主要是为了更改字体颜色
+            Dictionary<string, IFont> fonts = new Dictionary<string, IFont>();
+            //循环数据
+            foreach (var row in EntityList)
             {
-                //准备好sheet，每6万行生成一个sheet
-                var sheetno = ((EntityList.Count - 1) / 60000) + 1;
-                var headerStyle = workbook.CreateCellStyle();
-                //设定单元格边框
-                headerStyle.BorderBottom = BorderStyle.Thin;
-                headerStyle.BorderLeft = BorderStyle.Thin;
-                headerStyle.BorderRight = BorderStyle.Thin;
-                headerStyle.BorderTop = BorderStyle.Thin;
-                //用灰色填充背景
-                var headerbg = HSSFColor.Grey25Percent.Index;
-                headerStyle.FillForegroundColor = headerbg;
-                headerStyle.FillPattern = FillPattern.SolidForeground;
-                headerStyle.FillBackgroundColor = headerbg;
-                //去掉 Id 列和动作列
-                RemoveActionAndIdColumn();
-                //循环生成所有sheet，并为每个sheet添加表头
-                var headerrows = 0;
-                for (int i = 1; i <= sheetno; i++)
+                var sheetindex = ((rowIndex - headerrows) / 60000);
+                colIndex = 0;
+                string bgColor = "";
+                string fColor = "";
+                //获取设定的行背景色
+                bgColor = SetFullRowBgColor(row);
+                //获取设定的行前景色
+                fColor = SetFullRowColor(row);
+                var dr = sheets[sheetindex].CreateRow(rowIndex - sheetindex * 60000) as HSSFRow;
+                foreach (var baseCol in GridHeaders)
                 {
-                    HSSFSheet sheet = workbook.CreateSheet("Sheet" + i) as HSSFSheet;
-                    //生成表头
-                    headerrows = MakeExcelHeader(sheet, GridHeaders, 0, 0, headerStyle);
-                    sheets.Add(sheet);
-                }
-
-                var rowIndex = headerrows;
-                var colIndex = 0;
-
-                //Excel中用到的style，每种前景色和背景色的组合为一个style。Nopi值支持4000个style，所以同样的style要重复使用
-                Dictionary<string, ICellStyle> styles = new Dictionary<string, ICellStyle>();
-                //Excel中用到的font，主要是为了更改字体颜色
-                Dictionary<string, IFont> fonts = new Dictionary<string, IFont>();
-                //循环数据
-                foreach (var row in EntityList)
-                {
-                    var sheetindex = ((rowIndex - headerrows) / 60000);
-                    colIndex = 0;
-                    string bgColor = "";
-                    string fColor = "";
-                    //获取设定的行背景色
-                    bgColor = SetFullRowBgColor(row);
-                    //获取设定的行前景色
-                    fColor = SetFullRowColor(row);
-                    var dr = sheets[sheetindex].CreateRow(rowIndex - sheetindex * 60000) as HSSFRow;
-                    foreach (var baseCol in GridHeaders)
+                    //处理枚举变量的多语言
+                    bool IsEmunBoolParp = false;
+                    var proType = baseCol.FieldType;
+                    if (proType.IsEnumOrNullableEnum())
                     {
-                        //处理枚举变量的多语言 
-                        bool IsEmunBoolParp = false;
-                        var proType = baseCol.FieldType;
-                        if (proType.IsEnumOrNullableEnum())
+                        IsEmunBoolParp = true;
+                    }
+
+                    foreach (var col in baseCol.BottomChildren)
+                    {
+
+                        //获取数据，并过滤特殊字符
+                        string text = Regex.Replace(col.GetText(row).ToString(), @"<[^>]*>", String.Empty);
+
+                        //处理枚举变量的多语言
+
+                        if (IsEmunBoolParp)
                         {
-                            IsEmunBoolParp = true;
+                            if (int.TryParse(text, out int enumvalue))
+                            {
+                                text = PropertyHelper.GetEnumDisplayName(proType, enumvalue);
+                            }
                         }
 
-                        foreach (var col in baseCol.BottomChildren)
+
+                        //建立excel单元格
+                        var cell = dr.CreateCell(colIndex);
+                        ICellStyle style = null;
+                        IFont font = null;
+                        var styleKey = string.Empty;
+                        //获取设定的单元格背景色
+                        string backColor = col.GetBackGroundColor(row);
+                        //获取设定的单元格前景色
+                        string foreColor = col.GetForeGroundColor(row);
+                        //如果行背景色或单元格背景色有值，则用颜色的ARGB的值作为style的key
+                        if (bgColor != "" || backColor != "")
                         {
-
-                            //获取数据，并过滤特殊字符
-                            string text = Regex.Replace(col.GetText(row).ToString(), @"<[^>]*>", String.Empty);
-
-                            //处理枚举变量的多语言 
-
-                            if (IsEmunBoolParp)
-                            {
-                                text = PropertyHelper.GetEnumDisplayName(proType, text);
-                            }
-
-
-                            //建立excel单元格
-                            var cell = dr.CreateCell(colIndex);
-                            ICellStyle style = null;
-                            IFont font = null;
-                            var styleKey = string.Empty;
-                            //获取设定的单元格背景色
-                            string backColor = col.GetBackGroundColor(row);
-                            //获取设定的单元格前景色
-                            string foreColor = col.GetForeGroundColor(row);
-                            //如果行背景色或单元格背景色有值，则用颜色的ARGB的值作为style的key
+                            styleKey = backColor == "" ? bgColor : backColor;
+                        }
+                        //如果行前景色或单元格前景色有值，则用颜色的ARGB加上背景色的ARGB作为style的key
+                        if (fColor != "" || foreColor != "")
+                        {
+                            styleKey += foreColor == "" ? foreColor : fColor;
+                        }
+                        //如果已经有符合条件的style，则使用
+                        if (styles.ContainsKey(styleKey))
+                        {
+                            style = styles[styleKey];
+                        }
+                        //如果没有，则新建一个style
+                        else
+                        {
+                            var newKey = "";
+                            var newFontKey = "";
+                            //新建style
+                            style = workbook.CreateCellStyle();
+                            //设定单元格边框
+                            style.BorderBottom = BorderStyle.Thin;
+                            style.BorderLeft = BorderStyle.Thin;
+                            style.BorderRight = BorderStyle.Thin;
+                            style.BorderTop = BorderStyle.Thin;
+                            //如果行前景色或单元格前景色有值，则设定单元格的填充颜色
                             if (bgColor != "" || backColor != "")
                             {
-                                styleKey = backColor == "" ? bgColor : backColor;
+                                newKey = backColor == "" ? bgColor : backColor;
+                                var ci = Utils.GetExcelColor(backColor == "" ? bgColor : backColor);
+                                style.FillForegroundColor = ci;
+                                style.FillPattern = FillPattern.SolidForeground;
+                                style.FillBackgroundColor = ci;
                             }
-                            //如果行前景色或单元格前景色有值，则用颜色的ARGB加上背景色的ARGB作为style的key
+                            //如果行前景色或单元格前景色有值，则设定单元格的字体的颜色
                             if (fColor != "" || foreColor != "")
                             {
-                                styleKey += foreColor == "" ? foreColor : fColor;
-                            }
-                            //如果已经有符合条件的style，则使用
-                            if (styles.ContainsKey(styleKey))
-                            {
-                                style = styles[styleKey];
-                            }
-                            //如果没有，则新建一个style
-                            else
-                            {
-                                var newKey = "";
-                                var newFontKey = "";
-                                //新建style
-                                style = workbook.CreateCellStyle();
-                                //设定单元格边框
-                                style.BorderBottom = BorderStyle.Thin;
-                                style.BorderLeft = BorderStyle.Thin;
-                                style.BorderRight = BorderStyle.Thin;
-                                style.BorderTop = BorderStyle.Thin;
-                                //如果行前景色或单元格前景色有值，则设定单元格的填充颜色
-                                if (bgColor != "" || backColor != "")
+                                newFontKey = foreColor == "" ? foreColor : fColor;
+                                newKey += foreColor == "" ? foreColor : fColor;
+                                //如果已经有符合条件的字体，则使用
+                                if (fonts.ContainsKey(newFontKey))
                                 {
-                                    newKey = backColor == "" ? bgColor : backColor;
-                                    var ci = Utils.GetExcelColor(backColor == "" ? bgColor : backColor);
-                                    style.FillForegroundColor = ci;
-                                    style.FillPattern = FillPattern.SolidForeground;
-                                    style.FillBackgroundColor = ci;
+                                    font = fonts[newFontKey];
                                 }
-                                //如果行前景色或单元格前景色有值，则设定单元格的字体的颜色
-                                if (fColor != "" || foreColor != "")
+                                //如果没有，则新建
+                                else
                                 {
-                                    newFontKey = foreColor == "" ? foreColor : fColor;
-                                    newKey += foreColor == "" ? foreColor : fColor;
-                                    //如果已经有符合条件的字体，则使用
-                                    if (fonts.ContainsKey(newFontKey))
-                                    {
-                                        font = fonts[newFontKey];
-                                    }
-                                    //如果没有，则新建
-                                    else
-                                    {
-                                        //新建字体
-                                        font = workbook.CreateFont();
-                                        //设定字体颜色
-                                        font.Color = Utils.GetExcelColor(foreColor == "" ? fColor : foreColor);
-                                        //向集合中添加新字体
-                                        fonts.Add(newFontKey, font);
-                                    }
-                                    //设定style中的字体
-                                    style.SetFont(font);
+                                    //新建字体
+                                    font = workbook.CreateFont();
+                                    //设定字体颜色
+                                    font.Color = Utils.GetExcelColor(foreColor == "" ? fColor : foreColor);
+                                    //向集合中添加新字体
+                                    fonts.Add(newFontKey, font);
                                 }
-                                //将新建的style添加到集合中
-                                styles.Add(newKey, style);
+                                //设定style中的字体
+                                style.SetFont(font);
                             }
-                            cell.CellStyle = style;
-                            cell.SetCellValue(text);
-                            colIndex++;
+                            //将新建的style添加到集合中
+                            styles.Add(newKey, style);
                         }
+                        cell.CellStyle = style;
+                        cell.SetCellValue(text);
+                        colIndex++;
                     }
-                    rowIndex++;
                 }
+                rowIndex++;
             }
+
             //获取Excel文件的二进制数据
             byte[] rv = new byte[] { };
             using (MemoryStream ms = new MemoryStream())
@@ -453,7 +376,7 @@ namespace WalkingTec.Mvvm.Core
         /// <summary>
         ///记录批量操作时列表中选择的Id
         /// </summary>
-        public List<Guid> Ids { get; set; }
+        public List<string> Ids { get; set; }
 
         /// <summary>
         /// 每页行数
@@ -464,33 +387,40 @@ namespace WalkingTec.Mvvm.Core
         /// <summary>
         /// 是否已经搜索过
         /// </summary>
+        [JsonIgnore]
         public bool IsSearched { get; set; }
 
+        [JsonIgnore]
         public bool PassSearch { get; set; }
         /// <summary>
         /// 查询模式
         /// </summary>
+        [JsonIgnore]
         public ListVMSearchModeEnum SearcherMode { get; set; }
 
         /// <summary>
         /// 是否需要分页
         /// </summary>
+        [JsonIgnore]
         public bool NeedPage { get; set; }
 
         /// <summary>
         /// 数据列表
         /// </summary>
+        [JsonIgnore]
         public List<TModel> EntityList { get; set; }
 
 
         /// <summary>
         /// 搜索条件
         /// </summary>
+        [JsonIgnore]
         public TSearcher Searcher { get; set; }
 
         /// <summary>
         /// 使用 VM 的 Id 来生成 SearcherDiv 的 Id
         /// </summary>
+        [JsonIgnore]
         public string SearcherDivId
         {
             get { return this.UniqueId + "Searcher"; }
@@ -500,6 +430,7 @@ namespace WalkingTec.Mvvm.Core
         /// <summary>
         /// 替换查询条件，如果被赋值，则列表会使用里面的Lambda来替换原有Query里面的Where条件
         /// </summary>
+        [JsonIgnore()]
         public Expression<Func<TopBasePoco, bool>> ReplaceWhere { get; set; }
 
         /// <summary>
@@ -604,18 +535,8 @@ namespace WalkingTec.Mvvm.Core
         /// <returns>搜索语句</returns>
         public virtual IOrderedQueryable<TModel> GetCheckedExportQuery()
         {
-            var baseQuery = GetExportQuery();
-            if (ReplaceWhere == null)
-            {
-                WhereReplaceModifier mod = new WhereReplaceModifier(x => Ids.Contains(x.ID));
-                var newExp = mod.Modify(baseQuery.Expression);
-                var newQuery = baseQuery.Provider.CreateQuery<TModel>(newExp) as IOrderedQueryable<TModel>;
-                return newQuery;
-            }
-            else
-            {
-                return baseQuery;
-            }
+            var baseQuery = GetBatchQuery();
+            return baseQuery;
         }
 
         /// <summary>
@@ -625,10 +546,9 @@ namespace WalkingTec.Mvvm.Core
         public virtual IOrderedQueryable<TModel> GetBatchQuery()
         {
             var baseQuery = GetSearchQuery();
-            var ids = Ids ?? new List<Guid>();
             if (ReplaceWhere == null)
             {
-                WhereReplaceModifier mod = new WhereReplaceModifier(x => ids.Contains(x.ID));
+                var mod = new WhereReplaceModifier<TModel>(Ids.GetContainIdExpression<TModel>());
                 var newExp = mod.Modify(baseQuery.Expression);
                 var newQuery = baseQuery.Provider.CreateQuery<TModel>(newExp) as IOrderedQueryable<TModel>;
                 return newQuery;
@@ -686,7 +606,7 @@ namespace WalkingTec.Mvvm.Core
                 //如果设定了替换条件，则使用替换条件替换Query中的Where语句
                 if (ReplaceWhere != null)
                 {
-                    var mod = new WhereReplaceModifier(ReplaceWhere);
+                    var mod = new WhereReplaceModifier<TopBasePoco>(ReplaceWhere);
                     var newExp = mod.Modify(query.Expression);
                     query = query.Provider.CreateQuery<TModel>(newExp) as IOrderedQueryable<TModel>;
                 }
@@ -715,7 +635,7 @@ namespace WalkingTec.Mvvm.Core
                         }
                         if (Searcher.Limit == 0)
                         {
-                            Searcher.Limit = ConfigInfo.RPP;
+                            Searcher.Limit = ConfigInfo?.UiOptions.DataTable.RPP ?? 20;
                         }
                         //根据返回数据的数量，以及预先设定的每页行数来设定数据量和总页数
                         Searcher.Count = count;
@@ -728,7 +648,6 @@ namespace WalkingTec.Mvvm.Core
                         {
                             Searcher.Page = Searcher.PageCount;
                         }
-                        var test = query.ToList();
                         EntityList = query.Skip((Searcher.Page - 1) * Searcher.Limit).Take(Searcher.Limit).AsNoTracking().ToList();
                     }
                     else //如果不需要分页则直接获取数据
@@ -736,6 +655,7 @@ namespace WalkingTec.Mvvm.Core
                         EntityList = query.AsNoTracking().ToList();
                         Searcher.Count = EntityList.Count();
                         Searcher.Limit = EntityList.Count();
+                        Searcher.PageCount = 1;
                         Searcher.Page = 1;
                     }
                 }
@@ -757,6 +677,7 @@ namespace WalkingTec.Mvvm.Core
         private void ProcessCommand(DbCommand cmd)
         {
             object total;
+
             if (DC.Database.IsMySql())
             {
                 List<MySqlParameter> parms = new List<MySqlParameter>();
@@ -764,24 +685,71 @@ namespace WalkingTec.Mvvm.Core
                 {
                     parms.Add(new MySqlParameter(string.Format("@{0}", item.ParameterName), item.Value));
                 }
-
-                parms.Add(new MySqlParameter("@SearchMode", Enum.GetName(typeof(ListVMSearchModeEnum), SearcherMode)));
-                parms.Add(new MySqlParameter("@NeedPage", (NeedPage && Searcher.Limit != -1)));
-                parms.Add(new MySqlParameter("@CurrentPage", Searcher.Page));
-                parms.Add(new MySqlParameter("@RecordsPerPage", Searcher.Limit));
-                parms.Add(new MySqlParameter("@IDs", Ids == null ? "" : Ids.ToSpratedString()));
-
-                MySqlParameter outp = new MySqlParameter("@TotalRecords", MySqlDbType.Int64)
+                if (cmd.CommandType == CommandType.StoredProcedure)
                 {
-                    Value = 0,
-                    Direction = ParameterDirection.Output
-                };
-                parms.Add(outp);
+                    parms.Add(new MySqlParameter("@SearchMode", Enum.GetName(typeof(ListVMSearchModeEnum), SearcherMode)));
+                    parms.Add(new MySqlParameter("@NeedPage", (NeedPage && Searcher.Limit != -1)));
+                    parms.Add(new MySqlParameter("@CurrentPage", Searcher.Page));
+                    parms.Add(new MySqlParameter("@RecordsPerPage", Searcher.Limit));
+                    parms.Add(new MySqlParameter("@Sort", Searcher.SortInfo?.Property));
+                    parms.Add(new MySqlParameter("@SortDir", Searcher.SortInfo?.Direction));
+                    parms.Add(new MySqlParameter("@IDs", Ids == null ? "" : Ids.ToSpratedString()));
 
+                    MySqlParameter outp = new MySqlParameter("@TotalRecords", MySqlDbType.Int64)
+                    {
+                        Value = 0,
+                        Direction = ParameterDirection.Output
+                    };
+                    parms.Add(outp);
+                }
                 var pa = parms.ToArray();
 
-                EntityDataTable = DC.RunSP(cmd.CommandText, pa);
-                total = outp.Value;
+                EntityList = DC.Run<TModel>(cmd.CommandText, cmd.CommandType, pa).ToList();
+                if (cmd.CommandType == CommandType.StoredProcedure)
+                {
+                    total = pa.Last().Value;
+                }
+                else
+                {
+                    total = EntityList.Count;
+                }
+            }
+            else if (DC.Database.IsNpgsql())
+            {
+                List<NpgsqlParameter> parms = new List<NpgsqlParameter>();
+                foreach (NpgsqlParameter item in cmd.Parameters)
+                {
+                    parms.Add(new NpgsqlParameter(string.Format("@{0}", item.ParameterName), item.Value));
+                }
+
+                if (cmd.CommandType == CommandType.StoredProcedure)
+                {
+                    parms.Add(new NpgsqlParameter("@SearchMode", Enum.GetName(typeof(ListVMSearchModeEnum), SearcherMode)));
+                    parms.Add(new NpgsqlParameter("@NeedPage", (NeedPage && Searcher.Limit != -1)));
+                    parms.Add(new NpgsqlParameter("@CurrentPage", Searcher.Page));
+                    parms.Add(new NpgsqlParameter("@RecordsPerPage", Searcher.Limit));
+                    parms.Add(new NpgsqlParameter("@Sort", Searcher.SortInfo?.Property));
+                    parms.Add(new NpgsqlParameter("@SortDir", Searcher.SortInfo?.Direction));
+                    parms.Add(new NpgsqlParameter("@IDs", Ids == null ? "" : Ids.ToSpratedString()));
+
+                    NpgsqlParameter outp = new NpgsqlParameter("@TotalRecords", NpgsqlDbType.Bigint)
+                    {
+                        Value = 0,
+                        Direction = ParameterDirection.Output
+                    };
+                    parms.Add(outp);
+                }
+                var pa = parms.ToArray();
+
+                EntityList = DC.Run<TModel>(cmd.CommandText, cmd.CommandType, pa).ToList();
+                if (cmd.CommandType == CommandType.StoredProcedure)
+                {
+                    total = pa.Last().Value;
+                }
+                else
+                {
+                    total = EntityList.Count;
+                }
             }
             else
             {
@@ -790,22 +758,34 @@ namespace WalkingTec.Mvvm.Core
                 {
                     parms.Add(new SqlParameter(string.Format("@{0}", item.ParameterName), item.Value));
                 }
-
-                parms.Add(new SqlParameter("@SearchMode", Enum.GetName(typeof(ListVMSearchModeEnum), SearcherMode)));
-                parms.Add(new SqlParameter("@NeedPage", (NeedPage && Searcher.Limit != -1)));
-                parms.Add(new SqlParameter("@CurrentPage", Searcher.Page));
-                parms.Add(new SqlParameter("@RecordsPerPage", Searcher.Limit));
-                parms.Add(new SqlParameter("@IDs", Ids == null ? "" : Ids.ToSpratedString()));
-
-                SqlParameter outp = new SqlParameter("@TotalRecords", 0)
+                if (cmd.CommandType == CommandType.StoredProcedure)
                 {
-                    Direction = ParameterDirection.Output
-                };
-                parms.Add(outp);
+
+                    parms.Add(new SqlParameter("@SearchMode", Enum.GetName(typeof(ListVMSearchModeEnum), SearcherMode)));
+                    parms.Add(new SqlParameter("@NeedPage", (NeedPage && Searcher.Limit != -1)));
+                    parms.Add(new SqlParameter("@CurrentPage", Searcher.Page));
+                    parms.Add(new SqlParameter("@RecordsPerPage", Searcher.Limit));
+                    parms.Add(new SqlParameter("@Sort", Searcher.SortInfo?.Property));
+                    parms.Add(new SqlParameter("@SortDir", Searcher.SortInfo?.Direction));
+                    parms.Add(new SqlParameter("@IDs", Ids == null ? "" : Ids.ToSpratedString()));
+
+                    SqlParameter outp = new SqlParameter("@TotalRecords", 0)
+                    {
+                        Direction = ParameterDirection.Output
+                    };
+                    parms.Add(outp);
+                }
                 var pa = parms.ToArray();
 
-                EntityDataTable = DC.RunSP(cmd.CommandText, pa);
-                total = outp.Value;
+                EntityList = DC.Run<TModel>(cmd.CommandText, cmd.CommandType, pa).ToList();
+                if (cmd.CommandType == CommandType.StoredProcedure)
+                {
+                    total = pa.Last().Value;
+                }
+                else
+                {
+                    total = EntityList.Count;
+                }
 
             }
             if (NeedPage && Searcher.Limit != -1)
@@ -814,7 +794,7 @@ namespace WalkingTec.Mvvm.Core
                 {
                     try
                     {
-                        Searcher.Count = (long)total;
+                        Searcher.Count = long.Parse(total.ToString());
                         Searcher.PageCount = (int)((Searcher.Count - 1) / Searcher.Limit + 1);
                     }
                     catch { }
@@ -822,7 +802,7 @@ namespace WalkingTec.Mvvm.Core
             }
             else
             {
-                Searcher.PageCount = EntityDataTable.Rows.Count;
+                Searcher.PageCount = EntityList.Count;
             }
 
         }
@@ -857,7 +837,8 @@ namespace WalkingTec.Mvvm.Core
             {
                 foreach (var item in EntityList)
                 {
-                    if (Ids.Contains(item.ID))
+                    var id = item.GetID();
+                    if (Ids.Contains(id.ToString()))
                     {
                         item.Checked = true;
                     }
@@ -872,11 +853,11 @@ namespace WalkingTec.Mvvm.Core
         {
             if (root == null)
             {
-                if (_gridHeaders == null)
+                if (GridHeaders == null)
                 {
-                    var a = GridHeaders;
+                    GetHeaders();
                 }
-                root = _gridHeaders;
+                root = GridHeaders;
             }
             if (root != null)
             {
@@ -903,16 +884,25 @@ namespace WalkingTec.Mvvm.Core
         {
             if (root == null)
             {
-                if (_gridHeaders == null)
+                if (GridHeaders == null)
                 {
-                    var a = GridHeaders;
+                    GetHeaders();
                 }
-                root = _gridHeaders;
+                root = GridHeaders;
             }
             if (root != null)
             {
                 var aroot = root as List<GridColumn<TModel>>;
-                var remove = aroot.Where(x => x.ColumnType == GridColumnTypeEnum.Action).ToList();
+                List<GridColumn<TModel>> remove = null;
+                var idpro = typeof(TModel).GetProperties().Where(x => x.Name.ToLower() == "id").Select(x => x.PropertyType).FirstOrDefault();
+                if (idpro == typeof(string))
+                {
+                    remove = aroot.Where(x => x.ColumnType == GridColumnTypeEnum.Action || x.Hide == true).ToList();
+                }
+                else
+                {
+                    remove = aroot.Where(x => x.ColumnType == GridColumnTypeEnum.Action || x.Hide == true || x.FieldName?.ToLower() == "id").ToList();
+                }
                 foreach (var item in remove)
                 {
                     aroot.Remove(item);
@@ -921,7 +911,7 @@ namespace WalkingTec.Mvvm.Core
                 {
                     if (child.Children != null && child.Children.Count() > 0)
                     {
-                        RemoveActionColumn(child.Children);
+                        RemoveActionAndIdColumn(child.Children);
                     }
                 }
             }
@@ -933,17 +923,18 @@ namespace WalkingTec.Mvvm.Core
         /// </summary>
         public void AddErrorColumn()
         {
+            GetHeaders();
             //寻找所有Header为错误信息的列，如果没有则添加
-            if (GridHeaders.Where(x => x.Title == "错误").FirstOrDefault() == null)
+            if (GridHeaders.Where(x => x.Field == "BatchError").FirstOrDefault() == null)
             {
                 var temp = GridHeaders as List<GridColumn<TModel>>;
                 if (temp.Where(x => x.ColumnType == GridColumnTypeEnum.Action).FirstOrDefault() == null)
                 {
-                    temp.Add(this.MakeGridColumn(x => x.BatchError, Width: 200, Header: "错误").SetForeGroundFunc(x => "ff0000"));
+                    temp.Add(this.MakeGridColumn(x => x.BatchError, Width: 200, Header: "Error").SetForeGroundFunc(x => "ff0000"));
                 }
                 else
                 {
-                    temp.Insert(temp.Count - 1, this.MakeGridColumn(x => x.BatchError, Width: 200, Header: "错误").SetForeGroundFunc(x => "ff0000"));
+                    temp.Insert(temp.Count - 1, this.MakeGridColumn(x => x.BatchError, Width: 200, Header: "Error").SetForeGroundFunc(x => "ff0000"));
                 }
             }
         }
@@ -951,6 +942,7 @@ namespace WalkingTec.Mvvm.Core
         public void ProcessListError(List<TModel> Entities)
         {
             EntityList = Entities;
+            IsSearched = true;
             bool haserror = false;
             List<string> keys = new List<string>();
             if (string.IsNullOrEmpty(DetailGridPrix) == false)
@@ -1000,5 +992,138 @@ namespace WalkingTec.Mvvm.Core
         public string DetailGridPrix { get; set; }
 
         #endregion
+
+        public virtual void UpdateEntityList(bool updateAllFields=false)
+        {
+            if (EntityList != null)
+            {
+                var ftype = EntityList.GetType().GenericTypeArguments.First();
+                PropertyInfo[] itemPros = ftype.GetProperties();
+
+                foreach (var newitem in EntityList)
+                {
+                    var subtype = newitem.GetType();
+                    if (subtype.IsSubclassOf(typeof(BasePoco)))
+                    {
+                        BasePoco ent = newitem as BasePoco;
+                        if (ent.UpdateTime == null)
+                        {
+                            ent.UpdateTime = DateTime.Now;
+                        }
+                        if (string.IsNullOrEmpty(ent.UpdateBy))
+                        {
+                            ent.UpdateBy = LoginUserInfo?.ITCode;
+                        }
+                    }
+                    //循环页面传过来的子表数据,将关联到TopBasePoco的字段设为null,并且把外键字段的值设定为主表ID
+                    foreach (var itempro in itemPros)
+                    {
+                        if (itempro.PropertyType.IsSubclassOf(typeof(TopBasePoco)))
+                        {
+                            itempro.SetValue(newitem, null);
+                        }
+                    }
+                }
+
+                IEnumerable<TopBasePoco> data = null;
+                //打开新的数据库联接,获取数据库中的主表和子表数据
+                using (var ndc = DC.CreateNew())
+                {
+                    var ids = EntityList.Select(x => x.GetID().ToString()).ToList();
+                    data = ndc.Set<TModel>().AsNoTracking().Where(ids.GetContainIdExpression<TModel>()).ToList();
+                }
+                //比较子表原数据和新数据的区别
+                IEnumerable<TopBasePoco> toadd = null;
+                IEnumerable<TopBasePoco> toremove = null;
+                Utils.CheckDifference(data, EntityList, out toremove, out toadd);
+                //设定子表应该更新的字段
+                List<string> setnames = new List<string>();
+                foreach (var field in FC.Keys)
+                {
+                    if (field.StartsWith("EntityList[0]."))
+                    {
+                        string name = field.Replace("EntityList[0].", "");
+                        setnames.Add(name);
+                    }
+                }
+
+                //前台传过来的数据
+                foreach (var newitem in EntityList)
+                {
+                    //数据库中的数据
+                    foreach (var item in data)
+                    {
+                        //需要更新的数据
+                        if (newitem.GetID().ToString() == item.GetID().ToString())
+                        {
+                            dynamic i = newitem;
+                            var newitemType = item.GetType();
+                            foreach (var itempro in itemPros)
+                            {
+                                if (!itempro.PropertyType.IsSubclassOf(typeof(TopBasePoco)) && (updateAllFields == true || setnames.Contains(itempro.Name)))
+                                {
+                                    var notmapped = itempro.GetCustomAttribute<NotMappedAttribute>();
+                                    if (itempro.Name != "ID" && notmapped == null && itempro.PropertyType.IsList() == false)
+                                    {
+                                        DC.UpdateProperty(i, itempro.Name);
+                                    }
+                                }
+                            }
+                            if (item.GetType().IsSubclassOf(typeof(BasePoco)))
+                            {
+                                DC.UpdateProperty(i, "UpdateTime");
+                                DC.UpdateProperty(i, "UpdateBy");
+                            }
+                        }
+                    }
+                }
+                //需要删除的数据
+                foreach (var item in toremove)
+                {
+                    //如果是PersistPoco，则把IsValid设为false，并不进行物理删除
+                    if (ftype.IsSubclassOf(typeof(PersistPoco)))
+                    {
+                        (item as PersistPoco).IsValid = false;
+                        (item as PersistPoco).UpdateTime = DateTime.Now;
+                        (item as PersistPoco).UpdateBy = LoginUserInfo?.ITCode;
+                        dynamic i = item;
+                        DC.UpdateEntity(i);
+                    }
+                    else
+                    {
+                        foreach (var itempro in itemPros)
+                        {
+                            if (itempro.PropertyType.IsSubclassOf(typeof(TopBasePoco)))
+                            {
+                                itempro.SetValue(item, null);
+                            }
+                        }
+                        dynamic i = item;
+                        DC.DeleteEntity(i);
+                    }
+                }
+                //需要添加的数据
+                foreach (var item in toadd)
+                {
+                    if (item.GetType().IsSubclassOf(typeof(BasePoco)))
+                    {
+                        BasePoco ent = item as BasePoco;
+                        if (ent.CreateTime == null)
+                        {
+                            ent.CreateTime = DateTime.Now;
+                        }
+                        if (string.IsNullOrEmpty(ent.CreateBy))
+                        {
+                            ent.CreateBy = LoginUserInfo?.ITCode;
+                        }
+                    }
+                    DC.AddEntity(item);
+
+
+                }
+
+                DC.SaveChanges();
+            }
+        }
     }
 }

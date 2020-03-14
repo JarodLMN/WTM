@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.Linq;
@@ -35,7 +35,7 @@ namespace WalkingTec.Mvvm.Core
         /// 添加一组重复信息，一组中的多个字段必须同时重复才认为是重复数据
         /// </summary>
         /// <param name="FieldExps">一个或多个重复数据字段</param>
-        public void AddGroup(params DuplicatedField<T>[] FieldExps)
+        public DuplicatedInfo<T> AddGroup(params DuplicatedField<T>[] FieldExps)
         {
             DuplicatedGroup<T> newGroup = new DuplicatedGroup<T>()
             {
@@ -46,6 +46,7 @@ namespace WalkingTec.Mvvm.Core
                 newGroup.Fields.Add(exp);
             }
             Groups.Add(newGroup);
+            return this;
         }
     }
 
@@ -107,10 +108,13 @@ namespace WalkingTec.Mvvm.Core
             }
             //生成一个表达式，类似于 x=>x.field == val
             var splits = propName.Split('.');
-            Expression left = Expression.PropertyOrField(para, splits[0]);
+            var idproperty = typeof(T).GetProperties().Where(x => x.Name == splits[0]).FirstOrDefault();
+
+            Expression left = Expression.Property(para, idproperty);
             for (int i = 1; i < splits.Length; i++)
             {
-                left = Expression.PropertyOrField(left, splits[i]);
+                var tempproperty = typeof(T).GetProperties().Where(x => x.Name == splits[i]).FirstOrDefault();
+                left = Expression.Property(left, tempproperty);
             }
 
             if (val != null && left.Type.IsGeneric(typeof(Nullable<>)))

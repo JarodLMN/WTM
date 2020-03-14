@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 
@@ -79,6 +79,7 @@ namespace WalkingTec.Mvvm.Core
         /// 表头类型
         /// </summary>
         GridColumnTypeEnum ColumnType { get; set; }
+
         /// <summary>
         /// 设定字段名
         /// </summary>
@@ -120,6 +121,11 @@ namespace WalkingTec.Mvvm.Core
         bool? Hide { get; set; }
 
         /// <summary>
+        /// 是否显示汇总
+        /// </summary>
+        bool? ShowTotal { get; set; }
+
+        /// <summary>
         /// 子列
         /// </summary>
         IEnumerable<IGridColumn<T>> Children { get; }
@@ -149,6 +155,11 @@ namespace WalkingTec.Mvvm.Core
         /// 最下层列
         /// </summary>
         IEnumerable<IGridColumn<T>> BottomChildren { get; }
+
+        /// <summary>
+        /// 最大深度
+        /// </summary>
+        int MaxDepth { get; }
 
         #endregion
 
@@ -185,6 +196,8 @@ namespace WalkingTec.Mvvm.Core
         /// <param name="needFormat">是否适用format</param>
         /// <returns>内容</returns>
         object GetText(object source, bool needFormat = true);
+
+        object GetObject(object source);
         /// <summary>
         /// 获取前景色
         /// </summary>

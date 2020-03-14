@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
@@ -13,20 +13,27 @@ using WalkingTec.Mvvm.Mvc.Admin.ViewModels.FrameworkMenuVMs;
 namespace WalkingTec.Mvvm.Mvc.Admin.Controllers
 {
     [Area("_Admin")]
-    [ActionDescription("菜单管理")]
+    [ActionDescription("MenuMangement")]
     public class FrameworkMenuController : BaseController
     {
         #region 搜索
-        [ActionDescription("搜索")]
+        [ActionDescription("Search")]
         public ActionResult Index()
         {
             var vm = CreateVM<FrameworkMenuListVM>();
             return PartialView(vm);
         }
+
+        [ActionDescription("Search")]
+        [HttpPost]
+        public string Search(FrameworkMenuListVM vm)
+        {
+            return vm.GetJson(false);
+        }
         #endregion
 
         #region 新建
-        [ActionDescription("新建")]
+        [ActionDescription("Create")]
         public ActionResult Create(Guid? id)
         {
             var vm = CreateVM<FrameworkMenuVM>();
@@ -42,7 +49,7 @@ namespace WalkingTec.Mvvm.Mvc.Admin.Controllers
         }
 
         [HttpPost]
-        [ActionDescription("新建")]
+        [ActionDescription("Create")]
         public ActionResult Create(FrameworkMenuVM vm)
         {
             if (!ModelState.IsValid)
@@ -65,55 +72,15 @@ namespace WalkingTec.Mvvm.Mvc.Admin.Controllers
         }
         #endregion
 
-        #region 批量新建
-        [ActionDescription("批量新建")]
-        public ActionResult BatchCreate(Guid? id)
-        {
-            var vm = CreateVM<FrameworkMenuVM>();
-            vm.Entity.IsPublic = false;
-            vm.Entity.FolderOnly = false;
-            vm.Entity.ShowOnMenu = true;
-            vm.Entity.IsInside = true;
-            if (id != null)
-            {
-                vm.Entity.ParentId = id;
-            }
-            return PartialView(vm);
-        }
-
-        [HttpPost]
-        [ActionDescription("批量新建")]
-        public ActionResult BatchCreate(FrameworkMenuVM vm, IFormCollection fc)
-        {
-            if (!ModelState.IsValid)
-            {
-                return PartialView("BatchCreate", vm);
-            }
-            else
-            {
-                vm.DoBatchAdd();
-                if (!ModelState.IsValid)
-                {
-                    vm.DoReInit();
-                    return PartialView("BatchCreate", vm);
-                }
-                else
-                {
-                    return FFResult().CloseDialog().RefreshGrid();
-                }
-            }
-        }
-        #endregion
-
         #region 修改
-        [ActionDescription("修改")]
+        [ActionDescription("Edit")]
         public ActionResult Edit(Guid id)
         {
             var vm = CreateVM<FrameworkMenuVM>(id);
             return PartialView(vm);
         }
 
-        [ActionDescription("修改")]
+        [ActionDescription("Edit")]
         [HttpPost]
         public ActionResult Edit(FrameworkMenuVM vm)
         {
@@ -138,14 +105,14 @@ namespace WalkingTec.Mvvm.Mvc.Admin.Controllers
         #endregion
 
         #region 删除
-        [ActionDescription("删除")]
+        [ActionDescription("Delete")]
         public ActionResult Delete(Guid id)
         {
             var vm = CreateVM<FrameworkMenuVM>(id);
             return PartialView(vm);
         }
 
-        [ActionDescription("删除")]
+        [ActionDescription("Delete")]
         [HttpPost]
         public ActionResult Delete(Guid id, IFormCollection noUser)
         {
@@ -163,7 +130,7 @@ namespace WalkingTec.Mvvm.Mvc.Admin.Controllers
         #endregion
 
         #region 详细
-        [ActionDescription("详细")]
+        [ActionDescription("Details")]
         public PartialViewResult Details(Guid id)
         {
             var v = CreateVM<FrameworkMenuVM>(id);
@@ -171,45 +138,8 @@ namespace WalkingTec.Mvvm.Mvc.Admin.Controllers
         }
         #endregion
 
-        #region 页面权限
-        [ActionDescription("页面权限")]
-        public ActionResult PageFunction(Guid id)
-        {
-            var vm = CreateVM<PagePrivilegeVM>(id);
-            return PartialView(vm);
-        }
-
-        [ActionDescription("页面权限")]
-        [HttpPost]
-        public ActionResult PageFunction(PagePrivilegeVM vm)
-        {
-            //在这里只需要FrameworkMenu的ID，不需要验证其他项目，因为不会对FrameworkMenu本身作任何修改，所以不用判断ModelState
-            vm.DoAdd();
-            return FFResult().CloseDialog().Alert("操作成功");
-        }
-        #endregion
-
-        #region 同步模块
-        [ActionDescription("同步模块")]
-        [FixConnection(DBOperationEnum.Write)]
-        public async Task<ActionResult> SyncModel()
-        {
-            SycModelAndAction();
-            var alld = DC.Set<FrameworkDomain>().DPWhere(LoginUserInfo.DataPrivileges, x => x.ID).ToList();
-            foreach (var d in alld)
-            {
-                try
-                {
-                    await APIHelper.CallAPI(d.Address + "/WebApi/Pub/SyncModel");
-                }
-                catch { }
-            }
-            return FFResult().Alert("操作成功");
-        }
-        #endregion
-
         #region 未设置页面
-        [ActionDescription("检查页面")]
+        [ActionDescription("UnsetPages")]
         public ActionResult UnsetPages()
         {
             var vm = CreateVM<FrameworkActionListVM>();
@@ -218,144 +148,40 @@ namespace WalkingTec.Mvvm.Mvc.Admin.Controllers
         #endregion
 
         #region 刷新菜单
-        [ActionDescription("刷新菜单")]
-        public ActionResult RefreshMenu()
+        [ActionDescription("RefreshMenu")]
+        public async Task<ActionResult> RefreshMenu()
         {
-            var cache = GlobalServices.GetService<IMemoryCache>();
-            cache.Remove("FFMenus");
-            return FFResult().Alert("操作成功");
+            Cache.Delete("FFMenus");
+            var userids = DC.Set<FrameworkUserBase>().Select(x => x.ID.ToString().ToLower()).ToArray();
+            await LoginUserInfo.RemoveUserCache(userids);
+            return FFResult().Alert(Program._localizer["OprationSuccess"]);
         }
         #endregion
 
-        [ActionDescription("获取模块下的动作")]
-        public JsonResult GetActionsByModelId(Guid Id)
+        [ActionDescription("GetActionsByModelId")]
+        public JsonResult GetActionsByModelId(string Id)
         {
-            var actions = DC.Set<FrameworkAction>().Where(x => x.ModuleId == Id).GetSelectListItems(LoginUserInfo.DataPrivileges, null, x => x.ActionName);
-            return Json(actions);
-        }
-
-        [ActionDescription("同步模块")]
-        protected void SycModelAndAction()
-        {
-            var allModules = GlobaInfo.AllModule.Where(x => x.IgnorePrivillege == false);
-            using (var DC = CreateDC())
-            {
-                var dbModules = DC.Set<FrameworkModule>().Include(x => x.Actions).ToList();
-                var ToRemove = new List<FrameworkModule>();
-                var ToAdd = new List<FrameworkModule>();
-                var ToRemove2 = new List<FrameworkAction>();
-                var ToAdd2 = new List<FrameworkAction>();
-                foreach (var oldItem in dbModules)
-                {
-                    bool exist = false;
-                    foreach (var newItem in allModules)
-                    {
-                        if (oldItem.ClassName == newItem.ClassName && oldItem.NameSpace == newItem.NameSpace)
-                        {
-                            exist = true;
-                            break;
-                        }
-                    }
-                    if (exist == false)
-                    {
-                        ToRemove.Add(oldItem);
-                        ToRemove2.AddRange(oldItem.Actions);
-                    }
-                }
-                foreach (var newItem in allModules)
-                {
-                    bool exist = false;
-                    foreach (var oldItem in dbModules)
-                    {
-                        if (oldItem.ClassName == newItem.ClassName && oldItem.NameSpace == newItem.NameSpace)
-                        {
-                            oldItem.ModuleName = newItem.ModuleName;
-                            SycActions(newItem.Actions.Where(x => x.IgnorePrivillege == false).ToList(), oldItem.Actions, oldItem, DC);
-                            exist = true;
-                            break;
-                        }
-                    }
-                    if (exist == false)
-                    {
-                        ToAdd.Add(newItem);
-                        ToAdd2.AddRange(newItem.Actions);
-                    }
-                }
-                foreach (var remove in ToRemove2)
-                {
-                    DC.Set<FrameworkAction>().Remove(remove);
-                }
-                foreach (var remove in ToRemove)
-                {
-                    DC.Set<FrameworkModule>().Remove(remove);
-                }
-                foreach (var add in ToAdd)
-                {
-                    DC.Set<FrameworkModule>().Add(add);
-                }
-                DC.SaveChanges();
-            }
+            var modules = GlobalServices.GetRequiredService<GlobalData>().AllModule;
+            var m = modules.Where(x => x.FullName == Id).SelectMany(x => x.Actions).Where(x => x.MethodName != "Index" && x.IgnorePrivillege == false).ToList();
+            var AllActions = m.ToListItems(y => y.ActionName, y => y.Url);
+            AllActions.ForEach(x => x.Selected = true);
+            return Json(AllActions);
         }
 
         /// <summary>
-        /// 同步Actions
+        /// GetIconFontItems
         /// </summary>
-        /// <param name="newActions"></param>
-        /// <param name="oldActions"></param>
-        /// <param name="model"></param>
-        /// <param name="DC"></param>
-        private static void SycActions(List<FrameworkAction> newActions, List<FrameworkAction> oldActions, FrameworkModule model, IDataContext DC)
+        /// <param name="id"></param>
+        /// <returns></returns>
+        [HttpGet]
+        [ResponseCache(Duration = 3600)]
+        [AllRights]
+        public IActionResult GetIconFontItems(string id)
         {
-            var ToRemove = new List<FrameworkAction>();
-            var ToAdd = new List<FrameworkAction>();
-            foreach (var oldItem in oldActions)
-            {
-                bool exist = false;
-                foreach (var newItem in newActions)
-                {
-                    if (oldItem.MethodName == newItem.MethodName)
-                    {
-                        exist = true;
-                        break;
-                    }
-                }
-                if (exist == false)
-                {
-                    ToRemove.Add(oldItem);
-                }
-            }
-            foreach (var newItem in newActions)
-            {
-                bool exist = false;
-                foreach (var oldItem in oldActions)
-                {
-                    if (oldItem.MethodName == newItem.MethodName)
-                    {
-                        oldItem.ActionName = newItem.ActionName;
-                        exist = true;
-                        break;
-                    }
-                }
-                if (exist == false)
-                {
-                    ToAdd.Add(newItem);
-                }
-            }
-            foreach (var remove in ToRemove)
-            {
-                DC.Set<FrameworkAction>().Remove(remove);
-            }
-            foreach (var add in ToAdd)
-            {
-                add.ModuleId = model.ID;
-                FrameworkAction act = new FrameworkAction();
-                act.ModuleId = model.ID;
-                act.MethodName = add.MethodName;
-                act.Parameter = add.Parameter;
-                act.ParasToRunTest = add.ParasToRunTest;
-                act.ActionName = add.ActionName;
-                DC.Set<FrameworkAction>().Add(act);
-            }
+            if (!string.IsNullOrEmpty(id) && IconFontsHelper.IconFontDicItems.ContainsKey(id))
+                return Json(IconFontsHelper.IconFontDicItems[id]);
+            else
+                return Json(null);
         }
 
     }

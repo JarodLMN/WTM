@@ -1,9 +1,8 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
-using WalkingTec.Mvvm.Core.Extensions;
 
 namespace WalkingTec.Mvvm.Core
 {
@@ -13,6 +12,7 @@ namespace WalkingTec.Mvvm.Core
     /// <typeparam name="T">列表的数据源类</typeparam>
     public class GridColumn<T> : IGridColumn<T> where T : TopBasePoco
     {
+        public bool? ShowTotal { get; set; }
         public GridColumn(Expression<Func<T, object>> columnExp, int? width)
         {
             ColumnExp = columnExp;
@@ -34,6 +34,10 @@ namespace WalkingTec.Mvvm.Core
                 if (_field == null)
                 {
                     _field = PI?.Name;
+                    if (_field == null)
+                    {
+                        _field = (ColumnExp?.Body as ConstantExpression)?.Value?.ToString();
+                    }
                 }
                 return _field;
             }
@@ -57,7 +61,9 @@ namespace WalkingTec.Mvvm.Core
                 }
                 return _title;
             }
-            set { _title = value; }
+            set {
+                    _title = value;
+            }
         }
 
         /// <summary>
@@ -108,7 +114,7 @@ namespace WalkingTec.Mvvm.Core
                     if (Children != null && Children.Count() > 0)
                     {
                         len += Children.Where(x => x.Children == null || x.Children.Count() == 0).Count();
-                        var tempChildren = Children.Where(x=>x.Children!=null&&x.Children.Count()>0).ToList();
+                        var tempChildren = Children.Where(x => x.Children != null && x.Children.Count() > 0).ToList();
                         foreach (var item in tempChildren)
                         {
                             len += item.ChildrenLength;
@@ -191,9 +197,30 @@ namespace WalkingTec.Mvvm.Core
         /// </summary>
         public Expression<Func<T, object>> ColumnExp { get; set; }
 
+        private int? _maxDepth;
+
+        /// <summary>
+        /// 最大深度
+        /// </summary>
+        public int MaxDepth
+        {
+            get
+            {
+                if (_maxDepth == null)
+                {
+                    _maxDepth = 1;
+                    if (Children?.Count() > 0)
+                    {
+                        _maxDepth += Children.Max(x => x.MaxDepth);
+                    }
+                }
+                return _maxDepth.Value;
+            }
+        }
+
         #region 暂时没有用
         /// <summary>
-        /// 
+        ///
         /// </summary>
         public string Id { get; set; }
 
@@ -222,7 +249,7 @@ namespace WalkingTec.Mvvm.Core
         /// <summary>
         /// 获取值域类型
         /// </summary>
-        /// <returns></returns>       
+        /// <returns></returns>
         public Type FieldType
         {
             get
@@ -341,7 +368,26 @@ namespace WalkingTec.Mvvm.Core
             var col = CompiledCol?.Invoke(source as T);
             if (Format == null || (needFormat == false && Format.Method.ReturnType != typeof(string)))
             {
-                rv = col?.ToString();
+                if (col == null)
+                {
+                    rv = null;
+                }
+                else if (col is DateTime dateTime)
+                {
+                    rv = dateTime.ToString("yyyy-MM-dd HH:mm:ss");
+                }
+                else if (col != null && col is DateTime?)
+                {
+                    rv = (col as DateTime?).Value.ToString("yyyy-MM-dd HH:mm:ss");
+                }
+                else if (col is Enum)
+                {
+                    rv = (int)col;
+                }
+                else
+                {
+                    rv = col?.ToString();
+                }
             }
             else
             {
@@ -354,6 +400,11 @@ namespace WalkingTec.Mvvm.Core
             return rv;
         }
 
+        public virtual object GetObject(object source)
+        {
+            object rv = CompiledCol?.Invoke(source as T);
+            return rv;
+        }
 
         /// <summary>
         /// 获取列头内容

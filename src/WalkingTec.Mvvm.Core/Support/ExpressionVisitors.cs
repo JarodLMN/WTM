@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore.Query.Internal;
+using Microsoft.EntityFrameworkCore.Query.Internal;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -98,6 +98,24 @@ namespace WalkingTec.Mvvm.Core
         {
             //先调用一次Visit，删除所有的where表达式
             var rv = Visit(expression);
+            if (rv.NodeType == ExpressionType.Constant)
+            {
+                if ((rv.Type.IsGeneric(typeof(EntityQueryable<>)) || rv.Type.IsGeneric(typeof(EnumerableQuery<>))))
+                {
+                    var modelType = rv.Type.GenericTypeArguments[0];
+                    ParameterExpression pe = Expression.Parameter(modelType, "x");
+                    Expression left1 = Expression.Constant(1);
+                    Expression right1 = Expression.Constant(1);
+                    Expression trueExp = Expression.Equal(left1, right1);
+                    rv = Expression.Call(
+ typeof(Queryable),
+ "Where",
+ new Type[] { modelType },
+ rv,
+ Expression.Lambda(trueExp, new ParameterExpression[] { pe }));
+
+                }
+            }
             //将模式设为addMode，再调用一次Visit来添加新的表达式
             _addMode = true;
             rv = Visit(rv);
@@ -114,6 +132,10 @@ namespace WalkingTec.Mvvm.Core
             var parentNode = exp.Arguments[0] as MethodCallExpression;
             if (parentNode == null || (parentNode.Method.Name.ToLower() != "orderby" && parentNode.Method.Name.ToLower() != "orderbydescending"))
             {
+                if (parentNode == null)
+                {
+                    return exp.Arguments[0];
+                }
                 return parentNode;
             }
             else
@@ -134,7 +156,7 @@ namespace WalkingTec.Mvvm.Core
             {
                 var aType = node.Arguments[0].Type;
                 //如果节点是order
-                if (node != null && (node.Method.Name.ToLower() == "orderby" || node.Method.Name.ToLower() == "orderbydescending") && aType.GetTypeInfo().IsGenericType)
+                if (node != null && (node.Method.Name.ToLower() == "orderby" || node.Method.Name.ToLower() == "orderbydescending" || node.Method.Name.ToLower() == "thenby" || node.Method.Name.ToLower() == "thenbydescending") && aType.GetTypeInfo().IsGenericType)
                 {
                     //继续往上找到不是where的节点
                     return GetParentExpNotOrder(node);
@@ -148,9 +170,11 @@ namespace WalkingTec.Mvvm.Core
                 Expression rv = null;
                 foreach (var item in info)
                 {
-                    ParameterExpression pe = Expression.Parameter(modelType,"x");
-                    Expression pro = Expression.PropertyOrField(pe, item.Property);
-                    Type proType = modelType.GetProperty(item.Property).PropertyType;
+                    var idproperty = modelType.GetProperties().Where(x => x.Name == item.Property).FirstOrDefault();
+                    var reftype = idproperty.DeclaringType;
+                    ParameterExpression pe = Expression.Parameter(modelType, "x");
+                    Expression pro = Expression.Property(pe, reftype.GetProperties().Where(x => x.Name == item.Property).FirstOrDefault());
+                    Type proType = idproperty.PropertyType;
                     if (item.Direction == SortDir.Asc)
                     {
                         if (rv == null)
@@ -204,17 +228,17 @@ namespace WalkingTec.Mvvm.Core
     /// <summary>
     /// 替换表达式中的Where语句
     /// </summary>
-    public class WhereReplaceModifier : ExpressionVisitor
+    public class WhereReplaceModifier<T> : ExpressionVisitor where T:TopBasePoco
     {
         private Type _modelType;
         private bool _addMode = false;
-        private Expression<Func<TopBasePoco, bool>> _where;
+        private Expression<Func<T, bool>> _where;
 
         /// <summary>
         /// 构造函数
         /// </summary>
         /// <param name="where">需要替换的新where语句</param>
-        public WhereReplaceModifier(Expression<Func<TopBasePoco, bool>> where)
+        public WhereReplaceModifier(Expression<Func<T, bool>> where)
         {
             _where = where;
         }
@@ -407,7 +431,7 @@ namespace WalkingTec.Mvvm.Core
             }
             else if (expression.NodeType == ExpressionType.Constant)
             {
-                if (expression.Type.IsGeneric(typeof(EnumerableQuery<>)))
+                if (expression.Type.IsGeneric(typeof(EntityQueryable<>)) || expression.Type.IsGeneric(typeof(EnumerableQuery<>)))
                 {
                     return expression.Type.GenericTypeArguments[0];
                 }

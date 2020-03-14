@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Data.Common;
@@ -16,12 +16,11 @@ namespace WalkingTec.Mvvm.Core
         where T : TopBasePoco
         where S : ISearcher
     {
-        DataTable EntityDataTable { get; set; }
 
         /// <summary>
         /// 多级表头深度  默认 1级
         /// </summary>
-        int ChildrenDepth { get; set; }
+        int GetChildrenDepth();
 
         /// <summary>
         /// GetHeaders
@@ -41,12 +40,13 @@ namespace WalkingTec.Mvvm.Core
         /// <returns>Excel文件</returns>
         byte[] GenerateExcel();
 
+        string TotalText { get; set; }
         #region Old
         event Action<IBasePagedListVM<T, S>> OnAfterInitList;
         /// <summary>
         ///记录批量操作时列表中选择的Id
         /// </summary>
-        List<Guid> Ids { get; set; }
+        List<string> Ids { get; set; }
 
         /// <summary>
         /// 获取Model集合
@@ -148,6 +148,8 @@ namespace WalkingTec.Mvvm.Core
         /// 用于为子表生成可编辑Grid时，内部控件名称前缀
         /// </summary>
         string DetailGridPrix { get; set; }
+
+        void DoInitListVM();
 
         #endregion
 

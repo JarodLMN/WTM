@@ -1,15 +1,21 @@
-﻿using System;
+using System;
 using System.Linq;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.AspNetCore.Mvc.Filters;
 using WalkingTec.Mvvm.Core;
-using WalkingTec.Mvvm.Core.Extensions;
 using System.Collections.Generic;
 using System.Reflection;
 using WalkingTec.Mvvm.Core.Implement;
-using System.Threading.Tasks;
+using System.IO;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+using System.Text.RegularExpressions;
+using System.Text;
+using Microsoft.Extensions.Localization;
+using Microsoft.Extensions.Logging;
+using WalkingTec.Mvvm.Core.Support.Json;
 
 namespace WalkingTec.Mvvm.Mvc.Filters
 {
@@ -30,35 +36,17 @@ namespace WalkingTec.Mvvm.Mvc.Filters
                 context.HttpContext.Items.Add("actionstarttime", DateTime.Now);
             }
             var ctrlActDesc = context.ActionDescriptor as ControllerActionDescriptor;
-            var log = new ActionLog();// 初始化log备用
+            var log = new SimpleLog();// 初始化log备用
             var ctrlDes = ctrlActDesc.ControllerTypeInfo.GetCustomAttributes(typeof(ActionDescriptionAttribute), false).Cast<ActionDescriptionAttribute>().FirstOrDefault();
             var actDes = ctrlActDesc.MethodInfo.GetCustomAttributes(typeof(ActionDescriptionAttribute), false).Cast<ActionDescriptionAttribute>().FirstOrDefault();
             var postDes = ctrlActDesc.MethodInfo.GetCustomAttributes(typeof(HttpPostAttribute), false).Cast<HttpPostAttribute>().FirstOrDefault();
+            var validpostonly = ctrlActDesc.MethodInfo.GetCustomAttributes(typeof(ValidateFormItemOnlyAttribute), false).Cast<ValidateFormItemOnlyAttribute>().FirstOrDefault();
 
-            var crossDomain = ctrlActDesc.MethodInfo.GetCustomAttributes(typeof(CrossDomainAttribute), false).FirstOrDefault() as CrossDomainAttribute;
-            if (crossDomain == null) {
-                crossDomain = ctrlActDesc.ControllerTypeInfo.GetCustomAttributes(typeof(CrossDomainAttribute), false).FirstOrDefault() as CrossDomainAttribute;
-            }
-            if (crossDomain != null)
-            {
-                if (crossDomain.AllowOrigin == "*")
-                {
-                    context.HttpContext.Response.Headers.Add("Access-Control-Allow-Origin", context.HttpContext.Request.Headers["Origin"]);
-                }
-                else
-                {
-                    context.HttpContext.Response.Headers.Add("Access-Control-Allow-Origin", crossDomain.AllowOrigin);
-                }
-                context.HttpContext.Response.Headers.Add("Access-Control-Allow-Credentials", "true");
-                context.HttpContext.Response.Headers.Add("Access-Control-Allow-Methods", "POST, GET, OPTIONS, DELETE");
-                context.HttpContext.Response.Headers.Add("Access-Control-Allow-Headers", "Origin, No-Cache, X-Requested-With, If-Modified-Since, Pragma, Last-Modified, Cache-Control, Expires, Content-Type, X-E4M-With,userId,token");
-
-            }
             log.ITCode = ctrl.LoginUserInfo?.ITCode ?? string.Empty;
             //给日志的多语言属性赋值
-            log.ModuleName = ctrlDes?.Description ?? ctrlActDesc.ControllerName;
-            log.ActionName = actDes?.Description ?? ctrlActDesc.ActionName + (postDes == null ? string.Empty : "[P]");
-            log.ActionUrl = context.HttpContext.GetRemoteIpAddress();
+            log.ModuleName = ctrlDes?.GetDescription(ctrl) ?? ctrlActDesc.ControllerName;
+            log.ActionName = actDes?.GetDescription(ctrl) ?? ctrlActDesc.ActionName + (postDes == null ? string.Empty : "[P]");
+            log.ActionUrl = ctrl.BaseUrl;
             log.IP = context.HttpContext.Connection.RemoteIpAddress.ToString();
 
             ctrl.Log = log;
@@ -68,6 +56,8 @@ namespace WalkingTec.Mvvm.Mvc.Filters
                 {
                     var model = item.Value as BaseVM;
                     model.Session = new SessionServiceProvider(context.HttpContext.Session);
+                    model.Cache = ctrl.Cache;
+                    model.LoginUserInfo = ctrl.LoginUserInfo;
                     model.DC = ctrl.DC;
                     model.MSD = new ModelStateServiceProvider(ctrl.ModelState);
                     model.FC = new Dictionary<string, object>();
@@ -77,7 +67,15 @@ namespace WalkingTec.Mvvm.Mvc.Filters
                     model.Log = ctrl.Log;
                     model.CurrentUrl = ctrl.BaseUrl;
                     model.ConfigInfo = (Configs)context.HttpContext.RequestServices.GetService(typeof(Configs));
-                    model.DataContextCI = ((GlobalData)context.HttpContext.RequestServices.GetService(typeof(GlobalData))).DataContextCI;
+                    model.DataContextCI = model.ConfigInfo.ConnectionStrings.Where(x => x.Key.ToLower() == ctrl.CurrentCS.ToLower()).Select(x => x.DcConstructor).FirstOrDefault();
+                    model.Controller = ctrl;
+                    model.ControllerName = ctrl.GetType().FullName;
+                    model.Localizer = ctrl.Localizer;
+                    var programtype = ctrl.GetType().Assembly.GetTypes().Where(x => x.Name == "Program").FirstOrDefault();
+                    if (programtype != null)
+                    {
+                        model.Localizer = GlobalServices.GetRequiredService(typeof(IStringLocalizer<>).MakeGenericType(programtype)) as IStringLocalizer;
+                    }
                     if (ctrl is BaseController c)
                     {
                         model.WindowIds = c.WindowIds;
@@ -111,6 +109,43 @@ namespace WalkingTec.Mvvm.Mvc.Filters
                     }
                     catch { }
 
+                    if (ctrl is BaseApiController apictrl)
+                    {
+                        //apictrl.TryValidateModel(model);
+                        apictrl.HttpContext.Request.Body.Position = 0;
+                        StreamReader tr = new StreamReader(apictrl.HttpContext.Request.Body);
+                        string body = tr.ReadToEnd();
+                        var obj = JsonConvert.DeserializeObject(body) as JObject;
+                        var fields = GetJsonFields(obj);
+                        foreach (var field in fields)
+                        {
+                            model.FC.Add(field, null);
+                        }
+
+                    }
+                    if (model is IBaseCRUDVM<TopBasePoco> crud)
+                    {
+                        var pros = crud.Entity.GetType().GetProperties();
+                        foreach (var pro in pros)
+                        {
+                            //找到类型为List<xxx>的字段
+                            if (pro.PropertyType.GenericTypeArguments.Count() > 0)
+                            {
+                                //获取xxx的类型
+                                var ftype = pro.PropertyType.GenericTypeArguments.First();
+                                //如果xxx继承自TopBasePoco
+                                if (ftype.IsSubclassOf(typeof(TopBasePoco)))
+                                {
+                                    //界面传过来的子表数据
+
+                                    if (pro.GetValue(crud.Entity) is IEnumerable<TopBasePoco> list && list.Count() == 0)
+                                    {
+                                        pro.SetValue(crud.Entity, null);
+                                    }
+                                }
+                            }
+                        }
+                    }
                     //如果ViewModel T继承自IBaseBatchVM<BaseVM>，则自动为其中的ListVM和EditModel初始化数据
                     if (model is IBaseBatchVM<BaseVM>)
                     {
@@ -118,7 +153,7 @@ namespace WalkingTec.Mvvm.Mvc.Filters
                         if (temp.ListVM != null)
                         {
                             temp.ListVM.CopyContext(model);
-                            temp.ListVM.Ids = temp.Ids == null ? new List<Guid>() : temp.Ids.ToList();
+                            temp.ListVM.Ids = temp.Ids == null ? new List<string>() : temp.Ids.ToList();
                             temp.ListVM.SearcherMode = ListVMSearchModeEnum.Batch;
                             temp.ListVM.NeedPage = false;
                         }
@@ -133,17 +168,14 @@ namespace WalkingTec.Mvvm.Mvc.Filters
                             {
                                 self.RemoveActionColumn();
                                 self.RemoveAction();
-                                if (temp.ErrorMessage.Count > 0)
-                                {
-                                    self.AddErrorColumn();
-                                }
+                                self.AddErrorColumn();
                             };
                             if (temp.ListVM.Searcher != null)
                             {
                                 var searcher = temp.ListVM.Searcher;
                                 searcher.CopyContext(model);
-                                //searcher.DoReInit();
                             }
+                            temp.ListVM.DoInitListVM();
                         }
                         temp.LinkedVM?.DoInit();
                     }
@@ -153,16 +185,18 @@ namespace WalkingTec.Mvvm.Mvc.Filters
                         template.CopyContext(model);
                         template.DoReInit();
                     }
-                    //SetReinit
+                    model.Validate();
                     var invalid = ctrl.ModelState.Where(x => x.Value.ValidationState == Microsoft.AspNetCore.Mvc.ModelBinding.ModelValidationState.Invalid).Select(x => x.Key).ToList();
-                    foreach (var v in invalid)
+                    if ((ctrl as ControllerBase).Request.Method.ToLower() == "put" || validpostonly != null)
                     {
-                        if (model.FC.ContainsKey(v) == false)
+                        foreach (var v in invalid)
                         {
-                            ctrl.ModelState.Remove(v);
+                            if (model.FC.ContainsKey(v) == false)
+                            {
+                                ctrl.ModelState.Remove(v);
+                            }
                         }
                     }
-                    model.Validate();
                     if (ctrl is BaseController)
                     {
                         var reinit = model.GetType().GetTypeInfo().GetCustomAttributes(typeof(ReInitAttribute), false).Cast<ReInitAttribute>().SingleOrDefault();
@@ -181,11 +215,20 @@ namespace WalkingTec.Mvvm.Mvc.Filters
                             }
                         }
                     }
+
+                    //如果是子表外键验证错误，例如Entity.Majors[0].SchoolId为空这种错误，则忽略。因为框架会在添加修改的时候自动给外键赋值
+                    var toremove = ctrl.ModelState.Select(x => x.Key).Where(x => Regex.IsMatch(x, ".*?\\[.*?\\]\\..*?id", RegexOptions.IgnoreCase));
+                    foreach (var r in toremove)
+                    {
+                        ctrl.ModelState.Remove(r);
+                    }
                 }
             }
 
             base.OnActionExecuting(context);
         }
+
+
 
         public override void OnActionExecuted(ActionExecutedContext context)
         {
@@ -199,8 +242,8 @@ namespace WalkingTec.Mvvm.Mvc.Filters
             var ctrlActDesc = context.ActionDescriptor as ControllerActionDescriptor;
             if (context.Result is PartialViewResult)
             {
-                var model = (context.Result as PartialViewResult).ViewData.Model as BaseVM;
-                if (model == null)
+                var model = (context.Result as PartialViewResult).ViewData?.Model as BaseVM;
+                if (model == null && (context.Result as PartialViewResult).Model == null && (context.Result as PartialViewResult).ViewData != null)
                 {
                     model = ctrl.CreateVM<BaseVM>();
                     (context.Result as PartialViewResult).ViewData.Model = model;
@@ -208,7 +251,7 @@ namespace WalkingTec.Mvvm.Mvc.Filters
                 // 为所有 PartialView 加上最外层的 Div
                 if (model != null)
                 {
-                    string pagetitle = "";
+                    string pagetitle = string.Empty;
                     var menu = Utils.FindMenu(context.HttpContext.Request.Path);
                     if (menu == null)
                     {
@@ -218,9 +261,9 @@ namespace WalkingTec.Mvvm.Mvc.Filters
                         {
                             if (ctrlDes != null)
                             {
-                                pagetitle = ctrlDes.Description + " - ";
+                                pagetitle = ctrlDes.GetDescription(ctrl) + " - ";
                             }
-                            pagetitle += actDes.Description;
+                            pagetitle += actDes.GetDescription(ctrl);
                         }
                     }
                     else
@@ -235,18 +278,24 @@ namespace WalkingTec.Mvvm.Mvc.Filters
                         }
                         pagetitle += menu.PageName;
                     }
-                    context.HttpContext.Response.Cookies.Append("pagetitle", pagetitle);
+                    if (string.IsNullOrEmpty(pagetitle) == false)
+                    {
+                        context.HttpContext.Response.Headers.Add("X-wtm-PageTitle", Convert.ToBase64String(Encoding.UTF8.GetBytes(pagetitle)));
+                    }
                     context.HttpContext.Response.Cookies.Append("divid", model.ViewDivId);
-
                 }
             }
             if (context.Result is ViewResult)
             {
-                var model = (context.Result as ViewResult).ViewData.Model as BaseVM;
-                if (model == null)
+                var model = (context.Result as ViewResult).ViewData?.Model as BaseVM;
+                if (model == null && (context.Result as ViewResult).Model == null && (context.Result as ViewResult).ViewData != null)
                 {
                     model = ctrl.CreateVM<BaseVM>();
                     (context.Result as ViewResult).ViewData.Model = model;
+                }
+               if (model != null)
+                {
+                    context.HttpContext.Response.Cookies.Append("divid", model?.ViewDivId);
                 }
             }
             base.OnActionExecuted(context);
@@ -255,16 +304,21 @@ namespace WalkingTec.Mvvm.Mvc.Filters
         public override void OnResultExecuted(ResultExecutedContext context)
         {
             var ctrl = context.Controller as IBaseController;
+            if (ctrl == null)
+            {
+                base.OnResultExecuted(context);
+                return;
+            }
             var ctrlActDesc = context.ActionDescriptor as ControllerActionDescriptor;
+            var nolog = ctrlActDesc.MethodInfo.IsDefined(typeof(NoLogAttribute), false) || ctrlActDesc.ControllerTypeInfo.IsDefined(typeof(NoLogAttribute), false);
+
             //如果是来自Error，则已经记录过日志，跳过
             if (ctrlActDesc.ControllerName == "_Framework" && ctrlActDesc.ActionName == "Error")
             {
                 return;
             }
-            if (ctrl.ConfigInfo.EnableLog == true)
+            if ( nolog == false)
             {
-                if (ctrl.ConfigInfo.LogExceptionOnly == false || context.Exception != null)
-                {
                     var log = new ActionLog();
                     var ctrlDes = ctrlActDesc.ControllerTypeInfo.GetCustomAttributes(typeof(ActionDescriptionAttribute), false).Cast<ActionDescriptionAttribute>().FirstOrDefault();
                     var actDes = ctrlActDesc.MethodInfo.GetCustomAttributes(typeof(ActionDescriptionAttribute), false).Cast<ActionDescriptionAttribute>().FirstOrDefault();
@@ -274,11 +328,15 @@ namespace WalkingTec.Mvvm.Mvc.Filters
                     log.ActionTime = DateTime.Now;
                     log.ITCode = ctrl.LoginUserInfo?.ITCode ?? string.Empty;
                     // 给日志的多语言属性赋值
-                    log.ModuleName = ctrlDes?.Description ?? ctrlActDesc.ControllerName;
-                    log.ActionName = actDes?.Description ?? ctrlActDesc.ActionName + (postDes == null ? string.Empty : "[P]");
+                    log.ModuleName = ctrlDes?.GetDescription(ctrl) ?? ctrlActDesc.ControllerName;
+                    log.ActionName = actDes?.GetDescription(ctrl) ?? ctrlActDesc.ActionName + (postDes == null ? string.Empty : "[P]");
                     log.ActionUrl = context.HttpContext.Request.Path;
                     log.IP = context.HttpContext.GetRemoteIpAddress();
                     log.Remark = context.Exception?.ToString() ?? string.Empty;
+                    if (string.IsNullOrEmpty(log.Remark) == false && log.Remark.Length > 1000)
+                    {
+                        log.Remark = log.Remark.Substring(0, 1000);
+                    }
                     var starttime = context.HttpContext.Items["actionstarttime"] as DateTime?;
                     if (starttime != null)
                     {
@@ -286,14 +344,11 @@ namespace WalkingTec.Mvvm.Mvc.Filters
                     }
                     try
                     {
-                        using (var dc = ctrl.CreateDC(true))
-                        {
-                            dc.Set<ActionLog>().Add(log);
-                            dc.SaveChanges();
-                        }
+                        GlobalServices.GetRequiredService<ILogger<ActionLog>>().Log<ActionLog>(LogLevel.Information, new EventId(), log, null, (a,b)=> {
+                            return a.GetLogString();
+                        });
                     }
                     catch { }
-                }
             }
             if (context.Exception != null)
             {
@@ -304,10 +359,42 @@ namespace WalkingTec.Mvvm.Mvc.Filters
                 }
                 else
                 {
-                    context.HttpContext.Response.WriteAsync("页面发生错误");
+                    context.HttpContext.Response.WriteAsync(Program._localizer["PageError"]);
                 }
             }
             base.OnResultExecuted(context);
+        }
+
+        private IEnumerable<string> GetJsonFields(JObject j)
+        {
+            var children = j.Children();
+            foreach (var item in children)
+            {
+                var rv = GetTokenFields(item);
+                foreach (var i in rv)
+                {
+                    yield return i;
+                }
+            }
+            yield break;
+        }
+
+        private IEnumerable<string> GetTokenFields(JToken j)
+        {
+            if (j.Type == JTokenType.Property)
+            {
+                yield return j.Path;
+            }
+            var children = j.Children();
+            foreach (var item in children)
+            {
+                var rv = GetTokenFields(item);
+                foreach (var i in rv)
+                {
+                    yield return i;
+                }
+            }
+            yield break;
         }
     }
 }

@@ -16,10 +16,8 @@ import Models from './models'; //模型
 export class InsertForm extends React.Component<any, any> {
     models = Models.editModels(this.props);
     render() {
-        // item 的 props
         const props = {
             ...this.props,
-            // 模型
             models: this.models,
         }
         return <InfoShellLayout>
@@ -39,16 +37,17 @@ $fields$
     }
 })
 @observer
-export class UpdateForm extends React.Component<{ loadData: Function | Object }, any> {
+export class UpdateForm extends React.Component<WTM.FormProps, any> {
     // 创建模型
     models = Models.editModels(this.props);
     render() {
-        // item 的 props
+        const { form } = this.props;
+        const { getFieldDecorator } = form;
         const props = {
             ...this.props,
-            // 模型
             models: this.models,
         }
+        getFieldDecorator('Entity.ID', { initialValue: lodash.get(this.props.defaultValues, 'Entity.ID') })
         return <InfoShellLayout>
 $fields$
         </InfoShellLayout>
@@ -63,16 +62,12 @@ $fields$
     }
 })
 @observer
-export class InfoForm extends React.Component<{ loadData: Function | Object }, any> {
-    // 创建模型
+export class InfoForm extends React.Component<WTM.FormProps, any> {
     models = Models.editModels(this.props);
     render() {
-        // item 的 props
         const props = {
             ...this.props,
-            // 模型
             models: this.models,
-            // 禁用
             display: true,
         }
         return <InfoShellLayout >

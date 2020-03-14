@@ -1,4 +1,5 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
+using Newtonsoft.Json;
 using NPOI.HSSF.UserModel;
 using NPOI.HSSF.Util;
 using NPOI.SS.UserModel;
@@ -10,6 +11,7 @@ using System.IO;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
+using WalkingTec.Mvvm.Core.Extensions;
 
 namespace WalkingTec.Mvvm.Core
 {
@@ -35,36 +37,48 @@ namespace WalkingTec.Mvvm.Core
     {
         #region 字段、属性
         /// <summary>
+        /// 上传文件的Id，方便导入等操作中进行绑定，这类操作需要上传文件但不需要记录在数据库中，所以Model层中没有文件Id的字段
+        /// </summary>
+        [Display(Name = "UploadFile")]
+        public Guid? UploadFileId { get; set; }
+        /// <summary>
         /// 下载模板显示名称
         /// </summary>
+        [JsonIgnore]
         public string FileDisplayName { get; set; }
 
         /// <summary>
         /// 错误列表
         /// </summary>
+        [JsonIgnore]
         public TemplateErrorListVM ErrorListVM { get; set; }
 
         /// <summary>
         /// 是否验证模板类型（当其他系统模板导入到某模块时可设置为False）
         /// </summary>
+        [JsonIgnore]
         public bool ValidityTemplateType { get; set; }
 
         /// <summary>
         /// 下载模版页面的参数
         /// </summary>
+        [JsonIgnore]
         public Dictionary<string, string> Parms { get; set; }
 
+        [JsonIgnore]
         protected List<T> TemplateData;
 
 
         /// <summary>
         /// 要导入的Model列表
         /// </summary>
+        [JsonIgnore]
         public List<P> EntityList { get; set; }
 
         /// <summary>
         /// 模版
         /// </summary>
+        [JsonIgnore]
         public T Template { get; set; }
 
         //Model数据是否已被赋值
@@ -180,6 +194,7 @@ namespace WalkingTec.Mvvm.Core
                     subValString.Add(sub.Key, subVal);
                 }
 
+
                 P entity = null;
                 //说明主表信息为空
                 if (string.IsNullOrEmpty(mainValString))
@@ -211,7 +226,7 @@ namespace WalkingTec.Mvvm.Core
                             {
                                 //子表
                                 var subList = entity.GetType().GetProperty(pro.Name).GetValue(entity);
-
+                                string fk = DC.GetFKName<P>(pro.Name);
                                 //如果子表不为空
                                 if (!string.IsNullOrEmpty(subValString.Where(x => x.Key == sub.Key).FirstOrDefault().Value))
                                 {
@@ -236,6 +251,10 @@ namespace WalkingTec.Mvvm.Core
                                         //PropertyHelper.SetPropertyValue(obj, field.Name, ep.Value, stringBasedValue: true);
                                         SetEntityFieldValue(obj, ep, rowIndex, ep.FieldName, item);
                                     }
+                                    if(string.IsNullOrEmpty(fk) == false)
+                                    {                                        
+                                        PropertyHelper.SetPropertyValue(obj, fk, entity.GetID());
+                                    }
                                     //将付好值得SubTableType实例添加到List中
                                     list.Add(obj);
                                     PropertyHelper.SetPropertyValue(entity, pro.Name, list);
@@ -248,13 +267,13 @@ namespace WalkingTec.Mvvm.Core
                 }
                 entity.ExcelIndex = item.ExcelIndex;
                 var cinfo = this.SetDuplicatedCheck();
-                if (IsUpdateRecordDuplicated(cinfo, entity) == false)
-                {
+                //if (IsUpdateRecordDuplicated(cinfo, entity) == false)
+                //{
                     if (isMainData)
                     {
                         EntityList.Add(entity);
                     }
-                }
+                //}
             }
             isEntityListSet = true;
         }
@@ -323,8 +342,9 @@ namespace WalkingTec.Mvvm.Core
                 {
                     List<Expression> conditions = new List<Expression>();
                     //生成一个表达式，类似于 x=>x.Id != id，这是为了当修改数据时验证重复性的时候，排除当前正在修改的数据
-                    MemberExpression idLeft = Expression.Property(para, "Id");
-                    ConstantExpression idRight = Expression.Constant(entity.ID);
+                    var idproperty = modelType.GetProperties().Where(x => x.Name.ToLower() == "id").FirstOrDefault();
+                    MemberExpression idLeft = Expression.Property(para, idproperty);
+                    ConstantExpression idRight = Expression.Constant(entity.GetID());
                     BinaryExpression idNotEqual = Expression.NotEqual(idLeft, idRight);
                     conditions.Add(idNotEqual);
                     List<PropertyInfo> props = new List<PropertyInfo>();
@@ -384,8 +404,9 @@ namespace WalkingTec.Mvvm.Core
                 {
                     List<Expression> conditions = new List<Expression>();
                     //生成一个表达式，类似于 x=>x.Id != id，这是为了当修改数据时验证重复性的时候，排除当前正在修改的数据
-                    MemberExpression idLeft = Expression.Property(para, "Id");
-                    ConstantExpression idRight = Expression.Constant(entity.ID);
+                    var idproperty = modelType.GetProperties().Where(x => x.Name.ToLower() == "id").FirstOrDefault();
+                    MemberExpression idLeft = Expression.Property(para, idproperty);
+                    ConstantExpression idRight = Expression.Constant(entity.GetID());
                     BinaryExpression idNotEqual = Expression.NotEqual(idLeft, idRight);
                     conditions.Add(idNotEqual);
                     List<PropertyInfo> props = new List<PropertyInfo>();
@@ -439,12 +460,12 @@ namespace WalkingTec.Mvvm.Core
                         //如果只有一个字段重复，则拼接形成 xxx字段重复 这种提示
                         if (props.Count == 1)
                         {
-                            ErrorListVM.EntityList.Add(new ErrorMessage { Message = AllName + "数据重复", Index = entity.ExcelIndex });
+                            ErrorListVM.EntityList.Add(new ErrorMessage { Message = Program._localizer["DuplicateError", AllName], Index = entity.ExcelIndex });
                         }
                         //如果多个字段重复，则拼接形成 xx，yy，zz组合字段重复 这种提示
                         else if (props.Count > 1)
                         {
-                            ErrorListVM.EntityList.Add(new ErrorMessage { Message = AllName + "组合字段重复", Index = entity.ExcelIndex });
+                            ErrorListVM.EntityList.Add(new ErrorMessage { Message = Program._localizer["DuplicateGroupError", AllName], Index = entity.ExcelIndex });
                         }
                     }
                 }
@@ -520,18 +541,20 @@ namespace WalkingTec.Mvvm.Core
                     }
                 }
             }
-            //todo: RedoValidation
-            //BaseController bc = new BaseController();
+            //调用controller方法验证model
+            var vmethod = Controller?.GetType().GetMethod("RedoValidation");
             foreach (var entity in EntityList)
             {
-                //bool check = bc.RedoValidation(entity);
-                //if (check == false)
-                //{
-                //    ErrorListVM.ErrorList.Add(new ErrorMessage { Message = bc.ModelState.Where(x => x.Value.Errors != null && x.Value.Errors.Count > 0).SelectMany(x => x.Value.Errors).Select(x => x.ErrorMessage).FirstOrDefault(), Index = entity.ExcelIndex });
-                //}
+                try
+                {
+                    vmethod.Invoke(Controller, new object[] { entity });
+                }
+                catch { }
+
                 if (vm != null)
                 {
                     vm.SetEntity(entity);
+                    vm.ByPassBaseValidation = true;
                     vm.Validate();
                     var basevm = vm as BaseVM;
                     if (basevm?.MSD?.Count > 0)
@@ -561,7 +584,7 @@ namespace WalkingTec.Mvvm.Core
             foreach (var item in EntityList)
             {
                 //根据唯一性的设定查找数据库中是否有同样的数据
-                P exist = IsDuplicateData(item);
+                P exist = IsDuplicateData(item,finalInfo);
                 //如果有重复数据，则进行修改
                 if (exist != null)
                 {
@@ -569,11 +592,12 @@ namespace WalkingTec.Mvvm.Core
                     var tempPros = typeof(T).GetFields();
                     foreach (var pro in tempPros)
                     {
-                        var proToSet = typeof(P).GetProperty(pro.Name);
+                        var excelProp = Template.GetType().GetField(pro.Name).GetValue(Template) as ExcelPropety;
+                        var proToSet = typeof(P).GetProperties().Where(x => x.Name == excelProp.FieldName).FirstOrDefault();
                         if (proToSet != null)
                         {
                             var val = proToSet.GetValue(item);
-                            PropertyHelper.SetPropertyValue(exist, pro.Name, val, stringBasedValue: true);
+                            PropertyHelper.SetPropertyValue(exist, excelProp.FieldName, val, stringBasedValue: true);
                         }
                     }
                     //更新修改时间字段
@@ -604,6 +628,11 @@ namespace WalkingTec.Mvvm.Core
                         (item as BasePoco).CreateTime = DateTime.Now;
                         (item as BasePoco).CreateBy = LoginUserInfo?.ITCode;
                     }
+                    if (typeof(PersistPoco).IsAssignableFrom(item.GetType()))
+                    {
+                        (item as PersistPoco).IsValid = true;
+                    }
+
                     DC.Set<P>().Add(item);
                 }
             }
@@ -647,7 +676,7 @@ namespace WalkingTec.Mvvm.Core
                 hssfworkbook = new HSSFWorkbook();
                 if (UploadFileId == null)
                 {
-                    ErrorListVM.EntityList.Add(new ErrorMessage { Message = "请上传模板文件" });
+                    ErrorListVM.EntityList.Add(new ErrorMessage { Message = Program._localizer["PleaseUploadTemplate"] });
                     return;
                 }
                 var fa = DC.Set<FileAttachment>().Where(x => x.ID == UploadFileId).SingleOrDefault();
@@ -655,7 +684,7 @@ namespace WalkingTec.Mvvm.Core
 
                 if (ValidityTemplateType && hssfworkbook.GetSheetAt(1).GetRow(0).Cells[2].ToString() != typeof(T).Name)
                 {
-                    ErrorListVM.EntityList.Add(new ErrorMessage { Message = "错误的模板" });
+                    ErrorListVM.EntityList.Add(new ErrorMessage { Message = Program._localizer["WrongTemplate"] });
                     return;
                 }
                 ISheet sheet = hssfworkbook.GetSheetAt(0);
@@ -687,18 +716,23 @@ namespace WalkingTec.Mvvm.Core
                 var cells = sheet.GetRow(0).Cells;
                 if (columnCount != cells.Count)
                 {
-                    ErrorListVM.EntityList.Add(new ErrorMessage { Message = "请下载新模板或上传符合当前功能的模板" });
+                    ErrorListVM.EntityList.Add(new ErrorMessage { Message = Program._localizer["WrongTemplate"] });
                     return;
                 }
                 else
                 {
+                    bool hassubtable = false;
                     for (int i = 0; i < cells.Count; i++)
                     {
+                        if (excelPropetys[pIndex].SubTableType != null)
+                        {
+                            hassubtable = true;
+                        }
                         if (excelPropetys[pIndex].DataType != ColumnDataType.Dynamic)
                         {
                             if (cells[i].ToString().Trim('*') != excelPropetys[pIndex].ColumnName)
                             {
-                                ErrorListVM.EntityList.Add(new ErrorMessage { Message = "请下载新模板或上传符合当前功能的模板" });
+                                ErrorListVM.EntityList.Add(new ErrorMessage { Message = Program._localizer["WrongTemplate"] });
                                 return;
                             }
                             pIndex++;
@@ -711,13 +745,26 @@ namespace WalkingTec.Mvvm.Core
                             {
                                 if (cells[i].ToString().Trim('*') != listDynamicColumns[dclIndex].ColumnName)
                                 {
-                                    ErrorListVM.EntityList.Add(new ErrorMessage { Message = "请下载新模板或上传符合当前功能的模板" });
+                                    ErrorListVM.EntityList.Add(new ErrorMessage { Message = Program._localizer["WrongTemplate"] });
                                     break;
                                 }
                                 i = i + 1;
                             }
                             i = i - 1;
                             pIndex++;
+                        }
+                    }
+
+                    //如果有子表，则设置主表字段非必填
+                    if (hassubtable == true)
+                    {
+                        for (int i = 0; i < cells.Count; i++)
+                        {
+                            if (excelPropetys[i].SubTableType == null)
+                            {
+                                excelPropetys[i].IsNullAble = true;
+                            }
+
                         }
                     }
                 }
@@ -770,7 +817,7 @@ namespace WalkingTec.Mvvm.Core
             }
             catch
             {
-                ErrorListVM.EntityList.Add(new ErrorMessage { Message = "请下载新模板或上传符合当前功能的模板" });
+                ErrorListVM.EntityList.Add(new ErrorMessage { Message = Program._localizer["WrongTemplate"] });
                 //ErrorListVM.ErrorList.Add(new ErrorMessage { Message = ex.Message });
             }
             return;
@@ -851,6 +898,10 @@ namespace WalkingTec.Mvvm.Core
                 var de = e as DbUpdateException;
                 if (de.Entries != null)
                 {
+                    if(de.Entries.Count == 0)
+                    {
+                        ErrorListVM.EntityList.Add(new ErrorMessage { Index = 0, Message = e.Message+e.InnerException?.Message });
+                    }
                     //循环此错误相关的数据
                     foreach (var ent in de.Entries)
                     {
@@ -859,11 +910,11 @@ namespace WalkingTec.Mvvm.Core
                         //根据State判断修改或删除操作，输出不同的错误信息
                         if (ent.State == EntityState.Deleted)
                         {
-                            ErrorListVM.EntityList.Add(new ErrorMessage { Index = errorId, Message = "数据被使用，无法删除" });
+                            ErrorListVM.EntityList.Add(new ErrorMessage { Index = errorId, Message = Program._localizer["DataCannotDelete"] });
                         }
                         else if (ent.State == EntityState.Modified)
                         {
-                            ErrorListVM.EntityList.Add(new ErrorMessage { Index = errorId, Message = "修改失败" });
+                            ErrorListVM.EntityList.Add(new ErrorMessage { Index = errorId, Message = Program._localizer["EditFailed"] });
                         }
                         else
                         {
@@ -884,15 +935,16 @@ namespace WalkingTec.Mvvm.Core
         #endregion
 
         #region 验证数据重复
+
         /// <summary>
         /// 判断数据是否在库中存在重复数据
         /// </summary>
         /// <param name="Entity">要验证的数据</param>
+        /// <param name="checkCondition">验证表达式</param>
         /// <returns>null代表没有重复</returns>
-        protected P IsDuplicateData(P Entity)
+        protected P IsDuplicateData(P Entity, DuplicatedInfo<P> checkCondition)
         {
             //获取设定的重复字段信息
-            var checkCondition = SetDuplicatedCheck();
             if (checkCondition != null && checkCondition.Groups.Count > 0)
             {
                 //生成基础Query
@@ -917,6 +969,7 @@ namespace WalkingTec.Mvvm.Core
                         //将字段名保存，为后面生成错误信息作准备
                         props.AddRange(field.GetProperties());
                     }
+
                     if (conditions.Count > 0)
                     {
                         //循环添加条件并生成Where语句
@@ -989,7 +1042,7 @@ namespace WalkingTec.Mvvm.Core
         public ErrorObj GetErrorJson()
         {
             var mse = new ErrorObj();
-            mse.Entity = new Dictionary<string, string>();
+            mse.Form = new Dictionary<string, string>();
             var err = ErrorListVM?.EntityList?.Where(x => x.Index == 0).FirstOrDefault()?.Message;
             if (string.IsNullOrEmpty(err))
             {
@@ -1043,12 +1096,12 @@ namespace WalkingTec.Mvvm.Core
                 ms.Close();
                 ms.Dispose();
                 err = "导入时发生错误";
-                mse.Entity.Add("Import", err);
-                mse.Entity.Add("ErrorFileId", vm.Entity.ID.ToString());
+                mse.Form.Add("Entity.Import", err);
+                mse.Form.Add("Entity.ErrorFileId", vm.Entity.ID.ToString());
             }
             else
             {
-                mse.Entity.Add("Import", err);
+                mse.Form.Add("Entity.Import", err);
             }
             return mse;
         }
@@ -1057,12 +1110,12 @@ namespace WalkingTec.Mvvm.Core
     #region 辅助类
     public class ErrorMessage : TopBasePoco
     {
-        [Display(Name = "行号")]
+        [Display(Name = "RowIndex")]
         public long Index { get; set; }
 
-        [Display(Name = "列号")]
+        [Display(Name = "CellIndex")]
         public long Cell { get; set; }
-        [Display(Name = "错误信息")]
+        [Display(Name = "ErrorMsg")]
         public string Message { get; set; }
     }
 

@@ -1,5 +1,6 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
+using System.Web;
 
 namespace WalkingTec.Mvvm.Core
 {
@@ -49,6 +50,7 @@ namespace WalkingTec.Mvvm.Core
         BatchEdit,
         BatchDelete,
         Import,
+        ExportExcel,
         AddRow,
         RemoveRow,
         ActionsGroup
@@ -101,6 +103,21 @@ namespace WalkingTec.Mvvm.Core
         /// </summary>
         public bool HideOnToolBar { get; set; }
 
+        /// <summary>
+        /// bind to a column name to deside whether or not to show this action
+        /// </summary>
+        public string BindVisiableColName { get; set; }
+
+        /// <summary>
+        /// if the dialog need to be maximax
+        /// </summary>
+        public bool Max { get; set; }
+
+        /// <summary>
+        /// If this action is to download a file
+        /// </summary>
+        public bool IsDownload { get; set; }
+
         #region 请求链接相关
 
         /// <summary>
@@ -122,10 +139,10 @@ namespace WalkingTec.Mvvm.Core
         {
             get
             {
-                var rv = $"/{ControllerName}/{ActionName}";
+                var rv = $"/{HttpUtility.UrlEncode(ControllerName)}/{HttpUtility.UrlEncode(ActionName)}";
                 if (!string.IsNullOrEmpty(Area))
                 {
-                    rv = $"/{Area}{rv}";
+                    rv = $"/{HttpUtility.UrlEncode(Area)}{rv}";
                 }
                 if (!string.IsNullOrEmpty(QueryString))
                 {
@@ -145,6 +162,11 @@ namespace WalkingTec.Mvvm.Core
         /// 是否跳转到新页面
         /// </summary>
         public bool IsRedirect { get; set; }
+
+        /// <summary>
+        /// 弹出问询框
+        /// </summary>
+        public string PromptMessage { get; set; }
 
         /// <summary>
         /// 动作类型
@@ -178,7 +200,7 @@ namespace WalkingTec.Mvvm.Core
         /// 是否需要弹出窗口
         /// </summary>
         public bool ShowDialog { get; set; }
-        
+
         /// <summary>
         /// 如果设定了SubActions，则代表需要用SplitButton的形式展示，主GridAction将不起作用
         /// </summary>

@@ -20,10 +20,10 @@
     </wt:row>
 </wt:form>
 <script>
-    DbTypeChange({ value: 'UserGroup' });
+    DbTypeChange({ value: 0 });
     var selectedtablename = "";
     function DbTypeChange(data) {
-        if (data.value == "UserGroup") {
+        if (data.value == 0) {
             $('#userrow').css('display', 'none');
             $('#grouprow').css('display', 'block');
         }
@@ -42,9 +42,9 @@
     }
     function PriTypeChange(data) {
         selectedtablename = data.value;
-        ff.clearSelector("SelectedItemsID");
+        ff.clearSelector("DataPrivilegeVM_SelectedItemsID");
     }
     function SetTableName() {
-        ff.setSelectorPara("SelectedItemsID", { "Searcher.TableName": selectedtablename})
+        ff.setSelectorPara("DataPrivilegeVM_SelectedItemsID", { "Searcher.TableName": selectedtablename})
     }
 </script>

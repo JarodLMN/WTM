@@ -11,15 +11,11 @@ import { InfoForm, InsertForm, UpdateForm } from './forms';
  * 动作事件
  */
 export const ActionEvents = {
-    onTest(event: React.MouseEvent<HTMLButtonElement, MouseEvent>) {
-        event.preventDefault();
-        event.stopPropagation();
-    },
     /**
      * 导入
      */
     onImport() {
-        Store.onPageState("visiblePort", true)
+        Store.PageState.visiblePort = true;
     },
     /**
      * 导出
@@ -31,24 +27,24 @@ export const ActionEvents = {
      * 批量导出
      */
     onExportIds() {
-        Store.onExportIds([...Store.selectedRowKeys])
+        Store.onExportIds()
     },
     /**
      * 删除
      * @param data 
      */
     onDelete(data) {
-        Store.onDelete([lodash.get(data, Store.IdKey)])
+        Store.onDelete(data)
     },
     /**
     * 删除
     */
     onDeleteList() {
-        const length = Store.selectedRowKeys.length
+        const length = Store.DataSource.selectedRowKeys.length
         Modal.confirm({
             title: `确定删除 ${length} 条数据?`,
             onOk: async () => {
-                Store.onDelete([...Store.selectedRowKeys])
+                Store.onDelete(Store.DataSource.selectedRowKeys)
             },
             onCancel() { },
         });
@@ -61,7 +57,7 @@ export const ActionEvents = {
 @observer
 class PageAction extends React.Component<any, any> {
     render() {
-        const { selectedRowKeys } = Store;
+        const { selectedRowKeys } = Store.DataSource;
         const deletelength = selectedRowKeys.length;
         const disabled = deletelength < 1;
         return (
@@ -81,7 +77,7 @@ class PageAction extends React.Component<any, any> {
                         icon="edit"
                         disabled={deletelength != 1}
                     >
-                        <UpdateForm loadData={() => (lodash.find(Store.selectedRowKeys))} />
+                        <UpdateForm loadData={() => (lodash.find(selectedRowKeys))} />
                     </DialogForm>
                 </Visible>
                 <Visible visible={onAuthorizeActions(Store, "delete")}>

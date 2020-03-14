@@ -1,14 +1,11 @@
-﻿using Microsoft.AspNetCore.Mvc;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using WalkingTec.Mvvm.Core;
 using WalkingTec.Mvvm.Mvc;
 
 namespace WalkingTec.Mvvm.Doc.Controllers
 {
-    [Public]
+    [AllowAnonymous]
     [ActionDescription("数据层")]
     public class DataController : BaseController
     {
@@ -18,5 +15,10 @@ namespace WalkingTec.Mvvm.Doc.Controllers
             return PartialView();
         }
 
+        [ActionDescription("数据库同步")]
+        public IActionResult Migration()
+        {
+            return PartialView();
+        }
     }
 }
